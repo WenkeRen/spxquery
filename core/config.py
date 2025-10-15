@@ -31,22 +31,37 @@ class QueryConfig:
     aperture_diameter: float = 3.0  # pixels (default 3 pixel diameter)
     max_download_workers: int = 4
     max_processing_workers: int = 10  # Number of workers for photometry processing
+    cutout_size: Optional[str] = None  # e.g., "200px", "100,200px", "3arcmin", "0.1"
+    cutout_center: Optional[str] = None  # e.g., "70,20", "300.5,120px" (optional, defaults to source position)
     
     def __post_init__(self):
         # Convert to Path if string
         if isinstance(self.output_dir, str):
             self.output_dir = Path(self.output_dir)
-        
+
         # Validate bands
         valid_bands = ['D1', 'D2', 'D3', 'D4', 'D5', 'D6']
         if self.bands:
             invalid = set(self.bands) - set(valid_bands)
             if invalid:
                 raise ValueError(f"Invalid bands: {invalid}. Valid bands are: {valid_bands}")
-        
+
         # Validate aperture diameter
         if self.aperture_diameter <= 0:
             raise ValueError(f"Aperture diameter must be positive, got {self.aperture_diameter}")
+
+        # Validate cutout parameters
+        if self.cutout_size:
+            from ..utils.helpers import validate_cutout_size
+            if not validate_cutout_size(self.cutout_size):
+                raise ValueError(f"Invalid cutout_size format: '{self.cutout_size}'. "
+                               "Expected format: <value>[,<value>][units], e.g., '200px', '3arcmin', '0.1'")
+
+        if self.cutout_center:
+            from ..utils.helpers import validate_cutout_center
+            if not validate_cutout_center(self.cutout_center):
+                raise ValueError(f"Invalid cutout_center format: '{self.cutout_center}'. "
+                               "Expected format: <x>,<y>[units], e.g., '70,20', '300.5,120px'")
 
 
 @dataclass
@@ -159,7 +174,9 @@ class PipelineState:
                 'bands': self.config.bands,
                 'aperture_diameter': self.config.aperture_diameter,
                 'max_download_workers': self.config.max_download_workers,
-                'max_processing_workers': self.config.max_processing_workers
+                'max_processing_workers': self.config.max_processing_workers,
+                'cutout_size': self.config.cutout_size,
+                'cutout_center': self.config.cutout_center
             },
             'query_results': {
                 'observations': [
@@ -218,7 +235,9 @@ class PipelineState:
             bands=data['config'].get('bands'),
             aperture_diameter=data['config']['aperture_diameter'],
             max_download_workers=data['config']['max_download_workers'],
-            max_processing_workers=data['config'].get('max_processing_workers', 10)
+            max_processing_workers=data['config'].get('max_processing_workers', 10),
+            cutout_size=data['config'].get('cutout_size'),
+            cutout_center=data['config'].get('cutout_center')
         )
         
         # Reconstruct query results

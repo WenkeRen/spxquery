@@ -152,15 +152,29 @@ def query_spherex_observations(
     return query_results
 
 
-def _resolve_single_url(obs: ObservationInfo) -> Tuple[ObservationInfo, Optional[str]]:
+def _resolve_single_url(
+    obs: ObservationInfo,
+    cutout_size: Optional[str] = None,
+    cutout_center: Optional[str] = None,
+    source_ra: Optional[float] = None,
+    source_dec: Optional[float] = None
+) -> Tuple[ObservationInfo, Optional[str]]:
     """
-    Resolve a single datalink URL to actual download URL.
-    
+    Resolve a single datalink URL to actual download URL with optional cutout parameters.
+
     Parameters
     ----------
     obs : ObservationInfo
         Observation with datalink URL
-    
+    cutout_size : str, optional
+        Cutout size parameter (e.g., "200px", "3arcmin")
+    cutout_center : str, optional
+        Cutout center parameter (e.g., "70,20") or None to use source position
+    source_ra : float, optional
+        Source RA in degrees (used if cutout_center is None and cutout_size is specified)
+    source_dec : float, optional
+        Source Dec in degrees (used if cutout_center is None and cutout_size is specified)
+
     Returns
     -------
     Tuple[ObservationInfo, Optional[str]]
@@ -169,13 +183,23 @@ def _resolve_single_url(obs: ObservationInfo) -> Tuple[ObservationInfo, Optional
     try:
         # Get datalink content
         datalink_content = DatalinkResults.from_result_url(obs.access_url)
-        
+
         # Find the primary product (#this)
         primary_product = next(datalink_content.bysemantics("#this"))
         download_url = primary_product.access_url
-        
+
+        # Append cutout parameters if specified
+        if cutout_size:
+            from ..utils.helpers import format_cutout_url_params
+            # Use source position if available
+            ra = source_ra if source_ra is not None else obs.ra
+            dec = source_dec if source_dec is not None else obs.dec
+            cutout_params = format_cutout_url_params(cutout_size, cutout_center, ra, dec)
+            download_url = download_url + cutout_params
+            logger.debug(f"Added cutout parameters to {obs.obs_id}: {cutout_params}")
+
         return (obs, download_url)
-        
+
     except Exception as e:
         logger.error(f"Failed to get download URL for {obs.obs_id}: {e}")
         return (obs, None)
@@ -185,11 +209,13 @@ def get_download_urls(
     query_results: QueryResults,
     max_workers: int = 8,
     show_progress: bool = True,
-    cache_file: Optional[Path] = None
+    cache_file: Optional[Path] = None,
+    cutout_size: Optional[str] = None,
+    cutout_center: Optional[str] = None
 ) -> List[Tuple[ObservationInfo, str]]:
     """
     Process datalink URLs to get actual FITS file download URLs in parallel.
-    
+
     Parameters
     ----------
     query_results : QueryResults
@@ -200,7 +226,11 @@ def get_download_urls(
         Whether to show progress bar
     cache_file : Path, optional
         Path to cache file for storing/loading URLs
-    
+    cutout_size : str, optional
+        Cutout size parameter (e.g., "200px", "3arcmin")
+    cutout_center : str, optional
+        Cutout center parameter (e.g., "70,20") or None to use source position
+
     Returns
     -------
     List[Tuple[ObservationInfo, str]]
@@ -235,23 +265,34 @@ def get_download_urls(
     if show_progress:
         pbar = tqdm(total=len(query_results.observations), desc="Resolving URLs", unit="urls")
     
+    # Get source coordinates for cutout centering
+    source_ra = query_results.source.ra
+    source_dec = query_results.source.dec
+
     # Process URLs in parallel
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
+        # Submit all tasks with cutout parameters
         future_to_obs = {
-            executor.submit(_resolve_single_url, obs): obs 
+            executor.submit(
+                _resolve_single_url,
+                obs,
+                cutout_size,
+                cutout_center,
+                source_ra,
+                source_dec
+            ): obs
             for obs in query_results.observations
         }
-        
+
         # Process completed tasks
         for future in as_completed(future_to_obs):
             obs, url = future.result()
-            
+
             if url:
                 download_urls.append((obs, url))
             else:
                 failed_count += 1
-            
+
             if show_progress:
                 pbar.update(1)
     

@@ -134,7 +134,9 @@ class SPXQueryPipeline:
             self.state.query_results,
             max_workers=self.config.max_download_workers,
             show_progress=True,
-            cache_file=url_cache_file
+            cache_file=url_cache_file,
+            cutout_size=self.config.cutout_size,
+            cutout_center=self.config.cutout_center
         )
         
         if not download_info:
@@ -273,16 +275,18 @@ def run_pipeline(
     source_name: Optional[str] = None,
     resume: bool = False,
     log_level: str = "INFO",
-    max_processing_workers: int = 10
+    max_processing_workers: int = 10,
+    cutout_size: Optional[str] = None,
+    cutout_center: Optional[str] = None
 ) -> None:
     """
     Convenience function to run the pipeline.
-    
+
     Parameters
     ----------
     ra : float
         Right ascension in degrees
-    dec : float  
+    dec : float
         Declination in degrees
     output_dir : Path, optional
         Output directory (default: current directory)
@@ -298,6 +302,10 @@ def run_pipeline(
         Logging level
     max_processing_workers : int
         Number of worker processes for photometry (default: 10)
+    cutout_size : str, optional
+        Cutout size parameter (e.g., "200px", "3arcmin")
+    cutout_center : str, optional
+        Cutout center parameter (e.g., "70,20") or None to use source position
     """
     # Set up logging
     setup_logging(log_level)
@@ -311,7 +319,9 @@ def run_pipeline(
         output_dir=output_dir or Path.cwd(),
         bands=bands,
         aperture_diameter=aperture_diameter,
-        max_processing_workers=max_processing_workers
+        max_processing_workers=max_processing_workers,
+        cutout_size=cutout_size,
+        cutout_center=cutout_center
     )
     
     # Create and run pipeline

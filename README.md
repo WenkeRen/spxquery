@@ -31,12 +31,13 @@ pip install -e .
 ```python
 from spxquery.core.pipeline import run_pipeline
 
-# Run full pipeline for a source
+# Run full pipeline for a source with image cutout
 run_pipeline(
     ra=304.693508808,      # Right ascension in degrees
     dec=42.4436872991,     # Declination in degrees
     output_dir="my_output",
-    source_name="My_Star"
+    source_name="My_Star",
+    cutout_size="200px"    # Download 200x200 pixel cutouts instead of full images
 )
 ```
 
@@ -55,7 +56,8 @@ config = QueryConfig(
     source=source,
     output_dir="output",
     bands=['D1', 'D2', 'D3'],  # Specific bands only
-    aperture_diameter=3.0      # 3 pixel diameter
+    aperture_diameter=3.0,     # 3 pixel diameter
+    cutout_size="200px"        # Download 200x200 pixel cutouts (optional)
 )
 
 # Run pipeline
@@ -83,6 +85,53 @@ pipeline.run_visualization() # Create plots
 pipeline = SPXQueryPipeline(config)
 pipeline.resume()
 ```
+
+### 4. Using Image Cutouts
+
+Image cutouts significantly reduce download time and storage requirements:
+
+```python
+# Example 1: 200-pixel square cutout (recommended for point sources)
+config = QueryConfig(
+    source=source,
+    output_dir="output",
+    cutout_size="200px"  # ~0.7 MB per file vs ~70 MB full image
+)
+
+# Example 2: Rectangular cutout in arcminutes
+config = QueryConfig(
+    source=source,
+    output_dir="output",
+    cutout_size="5,10arcmin"  # 5×10 arcminute rectangular cutout
+)
+
+# Example 3: Cutout with custom center (useful for offset sources)
+config = QueryConfig(
+    source=source,
+    output_dir="output",
+    cutout_size="3arcmin",
+    cutout_center="304.7,42.5"  # RA, Dec in degrees
+)
+
+# Example 4: Full images (no cutout)
+config = QueryConfig(
+    source=source,
+    output_dir="output"
+    # Omit cutout_size to download full images
+)
+```
+
+**Cutout Size Formats:**
+- Pixels: `"200px"`, `"100,200pixels"`, `"500pix"`
+- Angular: `"3arcmin"`, `"30,45arcsec"`, `"0.1deg"`, `"0.05"` (degrees default)
+- SPHEREx pixel scale: ~6.2 arcsec/pixel
+
+**Storage Comparison:**
+- Full image: ~70 MB
+- 200px cutout: ~0.7 MB (99% reduction)
+- 500px cutout: ~4.3 MB (94% reduction)
+- 1000px cutout: ~17 MB (76% reduction)
+
 
 ## Output Structure
 

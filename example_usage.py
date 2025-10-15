@@ -20,7 +20,7 @@ def example_simple():
     ra = 304.693508808
     dec = 42.4436872991
 
-    # Run pipeline with default settings
+    # Run pipeline with default settings (downloads full images)
     run_pipeline(
         ra=ra,
         dec=dec,
@@ -31,10 +31,45 @@ def example_simple():
     )
 
 
-# Example 2: Step-by-step execution
+# Example 2: Image cutout usage (5 arcminute square)
+def example_cutout():
+    """Example using image cutouts to reduce download size."""
+    print("\nExample 2: Using image cutouts (5 arcmin square)")
+    print("-" * 50)
+
+    # Set up logging
+    setup_logging("INFO")
+
+    # Create source and configuration with cutout
+    source = Source(ra=304.693508808, dec=42.4436872991, name="Point_Source")
+
+    config = QueryConfig(
+        source=source,
+        output_dir=Path("cutout_output"),
+        bands=["D1", "D2", "D3"],  # Only query specific bands
+        aperture_diameter=3.0,  # 3 pixel diameter
+        max_download_workers=4,
+        max_processing_workers=8,
+        cutout_size="5arcmin",  # 5 arcminute square cutout
+    )
+
+    print(f"\nConfiguration:")
+    print(f"  Source: RA={source.ra}, Dec={source.dec}")
+    print(f"  Cutout size: {config.cutout_size}")
+    print(f"  Cutout center: {config.cutout_center or 'Source position (default)'}")
+    print(f"\nNote: 5 arcmin cutout at SPHEREx pixel scale (~6.2\"/pixel)")
+    print(f"      Approximate size: ~48×48 pixels")
+    print(f"      Storage: Much smaller than full 2040×2040 pixel image\n")
+
+    # Create and run pipeline
+    pipeline = SPXQueryPipeline(config)
+    pipeline.run_full_pipeline()
+
+
+# Example 3: Step-by-step execution with practical cutout size
 def example_step_by_step():
-    """Example showing step-by-step execution."""
-    print("\nExample 2: Step-by-step execution")
+    """Example showing step-by-step execution with image cutouts."""
+    print("\nExample 3: Step-by-step execution with cutouts")
     print("-" * 50)
 
     # Set up logging
@@ -50,7 +85,12 @@ def example_step_by_step():
         aperture_diameter=3.0,  # 3 pixel diameter
         max_download_workers=4,
         max_processing_workers=8,  # Use 8 workers for photometry processing
+        cutout_size="200px",  # 200×200 pixel cutout (recommended for point sources)
     )
+
+    print(f"\nConfiguration:")
+    print(f"  Cutout size: {config.cutout_size}")
+    print(f"  Storage savings: ~70 MB → ~0.7 MB per file (99% reduction)\n")
 
     # Create pipeline
     pipeline = SPXQueryPipeline(config)
@@ -69,10 +109,10 @@ def example_step_by_step():
     pipeline.run_visualization()
 
 
-# Example 3: Resume from interruption
+# Example 4: Resume from interruption
 def example_resume():
     """Example showing how to resume after interruption."""
-    print("\nExample 3: Resume from saved state")
+    print("\nExample 4: Resume from saved state")
     print("-" * 50)
 
     run_pipeline(
@@ -84,10 +124,10 @@ def example_resume():
     )
 
 
-# Example 4: Custom processing
+# Example 5: Custom processing with cutouts
 def example_custom_processing():
-    """Example with custom processing steps."""
-    print("\nExample 4: Custom processing")
+    """Example with custom processing steps and cutout URLs."""
+    print("\nExample 5: Custom processing with cutouts")
     print("-" * 50)
 
     from spxquery.core.query import get_download_urls, query_spherex_observations
@@ -100,18 +140,89 @@ def example_custom_processing():
     results = query_spherex_observations(source, bands=["D2"])
     print(f"Found {len(results)} observations")
 
-    # Get URLs with caching and parallel processing
+    # Get URLs with caching, parallel processing, and cutout parameters
     from pathlib import Path
 
-    cache_file = Path("example_urls.json")
-    urls = get_download_urls(results, max_workers=4, show_progress=True, cache_file=cache_file)
-    print(f"Got {len(urls)} download URLs")
+    cache_file = Path("example_urls_cutout.json")
+    urls = get_download_urls(
+        results,
+        max_workers=4,
+        show_progress=True,
+        cache_file=cache_file,
+        cutout_size="5arcmin",  # 5 arcminute square cutout
+        cutout_center=None,  # Use source position
+    )
+    print(f"Got {len(urls)} download URLs with cutout parameters")
 
-    # Process a single file (example)
+    # Show example URL with cutout parameters
     if urls:
         obs, url = urls[0]
-        print(f"Example observation: {obs.obs_id}")
-        print(f"Download URL: {url[:80]}...")  # Show first 80 chars
+        print(f"\nExample observation: {obs.obs_id}")
+        print(f"Download URL: {url[:120]}...")  # Show first 120 chars
+        print(f"\nNote: URL includes cutout parameters (center and size)")
+
+
+# Example 6: Various cutout size formats
+def example_cutout_formats():
+    """Example showing different cutout size formats."""
+    print("\nExample 6: Different cutout size formats")
+    print("-" * 50)
+
+    setup_logging("INFO")
+    source = Source(ra=304.693508808, dec=42.4436872991, name="Test_Source")
+
+    # Example A: Square pixel cutout (recommended for point sources)
+    print("\nA. 200-pixel square cutout:")
+    config_px = QueryConfig(
+        source=source,
+        output_dir=Path("cutout_200px"),
+        cutout_size="200px",
+    )
+    print(f"   cutout_size: {config_px.cutout_size}")
+    print(f"   Estimated size: ~0.7 MB per file (vs 70 MB full image)")
+
+    # Example B: Rectangular pixel cutout
+    print("\nB. 300×400 pixel rectangular cutout:")
+    config_rect = QueryConfig(
+        source=source,
+        output_dir=Path("cutout_rect"),
+        cutout_size="300,400px",
+    )
+    print(f"   cutout_size: {config_rect.cutout_size}")
+    print(f"   Estimated size: ~2.0 MB per file")
+
+    # Example C: Angular cutout (arcminutes)
+    print("\nC. 3 arcminute square cutout:")
+    config_arcmin = QueryConfig(
+        source=source,
+        output_dir=Path("cutout_3arcmin"),
+        cutout_size="3arcmin",
+    )
+    print(f"   cutout_size: {config_arcmin.cutout_size}")
+    print(f"   Approximately 29×29 pixels at SPHEREx scale (~6.2\"/pixel)")
+
+    # Example D: 5 arcminute cutout (good balance of coverage and efficiency)
+    print("\nD. 5 arcminute square cutout:")
+    config_5arcmin = QueryConfig(
+        source=source,
+        output_dir=Path("cutout_5arcmin"),
+        cutout_size="5arcmin",
+    )
+    print(f"   cutout_size: {config_5arcmin.cutout_size}")
+    print(f"   Approximately 48×48 pixels at SPHEREx scale (~6.2\"/pixel)")
+    print(f"   Good balance between coverage and file size")
+
+    # Example E: Custom center position
+    print("\nE. Cutout with custom center:")
+    config_custom = QueryConfig(
+        source=source,
+        output_dir=Path("cutout_custom_center"),
+        cutout_size="200px",
+        cutout_center="304.7,42.5",  # Slightly offset from source
+    )
+    print(f"   cutout_size: {config_custom.cutout_size}")
+    print(f"   cutout_center: {config_custom.cutout_center}")
+    print(f"   (Center offset from source position)")
 
 
 if __name__ == "__main__":
@@ -121,7 +232,9 @@ if __name__ == "__main__":
 
     # Uncomment the example you want to run:
 
-    example_simple()
-    # example_step_by_step()
-    # example_resume()
-    # example_custom_processing()
+    # example_simple()  # Basic usage without cutouts
+    example_cutout()  # 5 arcmin square cutout example
+    # example_step_by_step()  # Step-by-step with 200px cutout
+    # example_resume()  # Resume from saved state
+    # example_custom_processing()  # Custom processing with 5 arcmin cutout
+    # example_cutout_formats()  # Various cutout size formats
