@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
-from matplotlib.colors import Normalize
+from matplotlib.colors import Normalize, to_rgba
 from astropy.stats import sigma_clip
 
 from ..core.config import PhotometryResult
@@ -89,9 +89,11 @@ def create_spectrum_plot(
     apply_quality_filters: bool = True,
     sigma_threshold: float = 5.0,
     bad_flags_mask: Optional[int] = None,
+    use_magnitude: bool = False,
+    show_errorbars: bool = True,
 ) -> Axes:
     """
-    Create spectrum plot (wavelength vs flux).
+    Create spectrum plot (wavelength vs flux), color-coded by observation date.
 
     Parameters
     ----------
@@ -109,6 +111,10 @@ def create_spectrum_plot(
         Minimum SNR (flux/flux_err) for quality control
     bad_flags_mask : int, optional
         Integer mask with bad flag bits set (created by create_flag_mask)
+    use_magnitude : bool
+        If True, plot AB magnitude instead of flux (default: False)
+    show_errorbars : bool
+        If True, show errorbars (default: True)
 
     Returns
     -------
@@ -159,85 +165,167 @@ def create_spectrum_plot(
         rejected_regular = []
         rejected_upper_limits = []
 
-    # Plot good regular measurements with error bars
+    # Plot good regular measurements with error bars, color-coded by date
     if good_regular:
         wavelengths = [p.wavelength for p in good_regular]
-        fluxes = [p.flux for p in good_regular]
-        flux_errors = [p.flux_error for p in good_regular]
         bandwidths = [p.bandwidth for p in good_regular]
+        mjds = [p.mjd for p in good_regular]
 
-        ax.errorbar(
-            wavelengths,
-            fluxes,
-            xerr=bandwidths,
-            yerr=flux_errors,
-            fmt="o",
-            markersize=6,
-            capsize=3,
-            label="Measurements",
-            alpha=0.8,
-        )
+        # Get y values depending on magnitude or flux mode
+        if use_magnitude:
+            y_values = [p.mag_ab if p.mag_ab is not None else np.nan for p in good_regular]
+            y_errors = [p.mag_ab_error if p.mag_ab_error is not None else np.nan for p in good_regular]
+        else:
+            y_values = [p.flux for p in good_regular]
+            y_errors = [p.flux_error for p in good_regular]
+
+        # Convert MJD to days since first observation
+        mjd_min = min(mjds)
+        days_since_first = [mjd - mjd_min for mjd in mjds]
+
+        # Create colormap for date coding
+        cmap = cm.get_cmap("viridis")
+        norm = Normalize(vmin=0, vmax=max(days_since_first) if days_since_first else 1)
+
+        # Two-pass plotting: errorbars first (transparent), then markers (solid)
+
+        # Pass 1: Plot errorbars only (if enabled)
+        if show_errorbars:
+            for wl, y_val, y_err, bw, days in zip(wavelengths, y_values, y_errors, bandwidths, days_since_first):
+                if np.isnan(y_val):
+                    continue
+                color = cmap(norm(days))
+                ax.errorbar(
+                    wl,
+                    y_val,
+                    xerr=bw,
+                    yerr=y_err,
+                    fmt="none",  # No marker
+                    capsize=0,
+                    linewidth=0.5,
+                    elinewidth=0.5,
+                    color=color,
+                    alpha=0.2,  # Transparent errorbars
+                    zorder=1,  # Behind markers
+                )
+
+        # Pass 2: Plot markers only (solid)
+        for wl, y_val, days in zip(wavelengths, y_values, days_since_first):
+            if np.isnan(y_val):
+                continue
+            color = cmap(norm(days))
+            ax.plot(
+                wl,
+                y_val,
+                "o",
+                color=color,
+                markersize=1.5,
+                alpha=0.9,  # Solid markers
+                zorder=2,  # On top of errorbars
+            )
+
+        # Add colorbar for date
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=ax, pad=0.02)
+        cbar.set_label("Days since first obs", fontsize=10)
 
     # Plot rejected regular measurements as crosses
     if rejected_regular:
         wavelengths = [p.wavelength for p in rejected_regular]
-        fluxes = [p.flux for p in rejected_regular]
         bandwidths = [p.bandwidth for p in rejected_regular]
 
-        ax.errorbar(
-            wavelengths,
-            fluxes,
-            xerr=bandwidths,
-            yerr=None,
-            fmt="x",
-            markersize=4,
-            capsize=0,
-            label="Rejected",
-            alpha=0.5,
-            color="gray",
-        )
+        if use_magnitude:
+            y_values = [p.mag_ab if p.mag_ab is not None else np.nan for p in rejected_regular]
+        else:
+            y_values = [p.flux for p in rejected_regular]
+
+        # Filter out NaN values
+        valid_data = [(wl, y, bw) for wl, y, bw in zip(wavelengths, y_values, bandwidths) if not np.isnan(y)]
+        if valid_data:
+            wavelengths, y_values, bandwidths = zip(*valid_data)
+            ax.errorbar(
+                wavelengths,
+                y_values,
+                xerr=bandwidths,
+                yerr=None,
+                fmt="x",
+                markersize=2,
+                capsize=0,
+                linewidth=0.5,
+                elinewidth=0.5,
+                label="Rejected",
+                alpha=0.5,
+                color="gray",
+            )
 
     # Plot good upper limits
     if good_upper_limits:
         ul_wavelengths = [p.wavelength for p in good_upper_limits]
-        ul_fluxes = [p.flux + p.flux_error for p in good_upper_limits]  # Upper limit value
         ul_bandwidths = [p.bandwidth for p in good_upper_limits]
 
-        ax.errorbar(
-            ul_wavelengths,
-            ul_fluxes,
-            xerr=ul_bandwidths,
-            yerr=None,
-            fmt="v",
-            markersize=8,
-            capsize=0,
-            label="Upper limits",
-            alpha=0.8,
-            color="red",
-        )
+        if use_magnitude:
+            # For magnitude, upper limit on flux becomes lower limit on magnitude
+            # Use the stored mag_ab value (should represent the limit)
+            ul_y_values = [p.mag_ab if p.mag_ab is not None else np.nan for p in good_upper_limits]
+        else:
+            ul_y_values = [p.flux + p.flux_error for p in good_upper_limits]  # Upper limit value
+
+        # Filter out NaN values
+        valid_data = [(wl, y, bw) for wl, y, bw in zip(ul_wavelengths, ul_y_values, ul_bandwidths) if not np.isnan(y)]
+        if valid_data:
+            ul_wavelengths, ul_y_values, ul_bandwidths = zip(*valid_data)
+            ax.errorbar(
+                ul_wavelengths,
+                ul_y_values,
+                xerr=ul_bandwidths,
+                yerr=None,
+                fmt="v" if not use_magnitude else "^",  # Flip arrow for magnitude
+                markersize=3,
+                capsize=0,
+                linewidth=0.5,
+                elinewidth=0.5,
+                label="Upper limits" if not use_magnitude else "Lower limits (mag)",
+                alpha=0.8,
+                color="red",
+            )
 
     # Plot rejected upper limits as small crosses
     if rejected_upper_limits:
         ul_wavelengths = [p.wavelength for p in rejected_upper_limits]
-        ul_fluxes = [p.flux + p.flux_error for p in rejected_upper_limits]
         ul_bandwidths = [p.bandwidth for p in rejected_upper_limits]
 
-        ax.errorbar(
-            ul_wavelengths,
-            ul_fluxes,
-            xerr=ul_bandwidths,
-            yerr=None,
-            fmt="x",
-            markersize=4,
-            capsize=0,
-            label="Rejected (UL)",
-            alpha=0.5,
-            color="lightcoral",
-        )
+        if use_magnitude:
+            ul_y_values = [p.mag_ab if p.mag_ab is not None else np.nan for p in rejected_upper_limits]
+        else:
+            ul_y_values = [p.flux + p.flux_error for p in rejected_upper_limits]
+
+        # Filter out NaN values
+        valid_data = [(wl, y, bw) for wl, y, bw in zip(ul_wavelengths, ul_y_values, ul_bandwidths) if not np.isnan(y)]
+        if valid_data:
+            ul_wavelengths, ul_y_values, ul_bandwidths = zip(*valid_data)
+            ax.errorbar(
+                ul_wavelengths,
+                ul_y_values,
+                xerr=ul_bandwidths,
+                yerr=None,
+                fmt="x",
+                markersize=2,
+                capsize=0,
+                linewidth=0.5,
+                elinewidth=0.5,
+                label="Rejected (UL)",
+                alpha=0.5,
+                color="lightcoral",
+            )
 
     # Formatting
     ax.set_xlabel("Wavelength (μm)", fontsize=12)
-    ax.set_ylabel("Flux (MJy/sr)", fontsize=12)
+    if use_magnitude:
+        ax.set_ylabel("AB Magnitude", fontsize=12)
+        ax.invert_yaxis()  # Fainter sources have higher magnitudes
+    else:
+        ax.set_ylabel("Flux (MJy/sr)", fontsize=12)
     ax.set_title("SPHEREx Spectrum", fontsize=14)
     ax.grid(True, alpha=0.3)
     ax.legend()
@@ -256,6 +344,8 @@ def create_lightcurve_plot(
     apply_quality_filters: bool = True,
     sigma_threshold: float = 5.0,
     bad_flags_mask: Optional[int] = None,
+    use_magnitude: bool = False,
+    show_errorbars: bool = True,
 ) -> Axes:
     """
     Create light curve plot (time vs flux) color-coded by wavelength.
@@ -276,6 +366,10 @@ def create_lightcurve_plot(
         Minimum SNR (flux/flux_err) for quality control
     bad_flags_mask : int, optional
         Integer mask with bad flag bits set (created by create_flag_mask)
+    use_magnitude : bool
+        If True, plot AB magnitude instead of flux (default: False)
+    show_errorbars : bool
+        If True, show errorbars (default: True)
 
     Returns
     -------
@@ -327,36 +421,103 @@ def create_lightcurve_plot(
     good_sorted = sorted(good_points, key=lambda x: x.mjd)
     rejected_sorted = sorted(rejected_points, key=lambda x: x.mjd)
 
-    # Plot good points with color based on wavelength
+    # Two-pass plotting: errorbars first (transparent), then markers (solid)
+
+    # Pass 1: Plot errorbars only (if enabled)
+    if show_errorbars:
+        for result in good_sorted:
+            color = cmap(norm(result.wavelength))
+
+            if result.is_upper_limit:
+                # Skip upper limits for errorbars
+                continue
+            else:
+                # Plot regular measurement errorbars
+                if use_magnitude:
+                    y_val = result.mag_ab if result.mag_ab is not None else np.nan
+                    y_err = result.mag_ab_error if result.mag_ab_error is not None else np.nan
+                else:
+                    y_val = result.flux
+                    y_err = result.flux_error
+
+                if np.isnan(y_val):
+                    continue
+
+                ax.errorbar(
+                    result.mjd,
+                    y_val,
+                    yerr=y_err,
+                    fmt="none",  # No marker
+                    capsize=0,
+                    linewidth=0.5,
+                    elinewidth=0.5,
+                    color=color,
+                    alpha=0.2,  # Transparent errorbars
+                    zorder=1,  # Behind markers
+                )
+
+    # Pass 2: Plot markers only (solid)
     for result in good_sorted:
         color = cmap(norm(result.wavelength))
 
         if result.is_upper_limit:
             # Plot upper limit
-            ax.errorbar(
-                result.mjd, result.flux + result.flux_error, yerr=None, fmt="v", color=color, markersize=8, alpha=0.8
+            if use_magnitude:
+                y_val = result.mag_ab if result.mag_ab is not None else np.nan
+                marker = "^"  # Flip for magnitude (lower limit)
+            else:
+                y_val = result.flux + result.flux_error
+                marker = "v"
+
+            if np.isnan(y_val):
+                continue
+
+            ax.plot(
+                result.mjd,
+                y_val,
+                marker,
+                color=color,
+                markersize=3,
+                alpha=0.9,  # Solid markers
+                zorder=2,  # On top of errorbars
             )
         else:
             # Plot regular measurement
-            ax.errorbar(
+            if use_magnitude:
+                y_val = result.mag_ab if result.mag_ab is not None else np.nan
+            else:
+                y_val = result.flux
+
+            if np.isnan(y_val):
+                continue
+
+            ax.plot(
                 result.mjd,
-                result.flux,
-                yerr=result.flux_error,
-                fmt="o",
+                y_val,
+                "o",
                 color=color,
-                markersize=6,
-                capsize=3,
-                alpha=0.8,
+                markersize=1.5,
+                alpha=0.9,  # Solid markers
+                zorder=2,  # On top of errorbars
             )
 
     # Plot rejected points as small gray crosses
     for result in rejected_sorted:
+        if use_magnitude:
+            y_val = result.mag_ab if result.mag_ab is not None else np.nan
+        else:
+            y_val = result.flux
+
+        # Skip if invalid magnitude
+        if np.isnan(y_val):
+            continue
+
         ax.plot(
             result.mjd,
-            result.flux,
+            y_val,
             "x",
             color="gray",
-            markersize=4,
+            markersize=2,
             alpha=0.5,
         )
 
@@ -368,7 +529,11 @@ def create_lightcurve_plot(
 
     # Formatting
     ax.set_xlabel("MJD", fontsize=12)
-    ax.set_ylabel("Flux (MJy/sr)", fontsize=12)
+    if use_magnitude:
+        ax.set_ylabel("AB Magnitude", fontsize=12)
+        ax.invert_yaxis()  # Fainter sources have higher magnitudes
+    else:
+        ax.set_ylabel("Flux (MJy/sr)", fontsize=12)
     ax.set_title("SPHEREx Light Curve", fontsize=14)
     ax.grid(True, alpha=0.3)
 
@@ -391,6 +556,8 @@ def create_combined_plot(
     apply_quality_filters: bool = True,
     sigma_threshold: float = 5.0,
     bad_flags: Optional[List[int]] = None,
+    use_magnitude: bool = False,
+    show_errorbars: bool = True,
 ) -> Figure:
     """
     Create combined plot with spectrum and light curve.
@@ -419,6 +586,10 @@ def create_combined_plot(
     bad_flags : List[int], optional
         List of bad flag bit positions to reject
         Default: [0, 1, 2, 6, 7, 9, 10, 11, 15]
+    use_magnitude : bool
+        If True, plot AB magnitude instead of flux (default: False)
+    show_errorbars : bool
+        If True, show errorbars (default: True)
 
     Returns
     -------
@@ -463,7 +634,9 @@ def create_combined_plot(
         sigma=sigma,
         apply_quality_filters=apply_quality_filters,
         sigma_threshold=sigma_threshold,
-        bad_flags_mask=bad_flags_mask
+        bad_flags_mask=bad_flags_mask,
+        use_magnitude=use_magnitude,
+        show_errorbars=show_errorbars,
     )
 
     # Create light curve plot (bottom) with QC classification
@@ -474,7 +647,9 @@ def create_combined_plot(
         sigma=sigma,
         apply_quality_filters=apply_quality_filters,
         sigma_threshold=sigma_threshold,
-        bad_flags_mask=bad_flags_mask
+        bad_flags_mask=bad_flags_mask,
+        use_magnitude=use_magnitude,
+        show_errorbars=show_errorbars,
     )
 
     # Save if requested

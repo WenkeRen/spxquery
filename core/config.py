@@ -35,6 +35,8 @@ class QueryConfig:
     cutout_center: Optional[str] = None  # e.g., "70,20", "300.5,120px" (optional, defaults to source position)
     sigma_threshold: float = 5.0  # Minimum SNR (flux/flux_err) for quality control
     bad_flags: List[int] = field(default_factory=lambda: [0, 1, 2, 6, 7, 9, 10, 11, 15])  # Flags to reject
+    use_magnitude: bool = False  # If True, plot AB magnitude instead of flux (default: False)
+    show_errorbars: bool = True  # If True, show errorbars on plots (default: True)
     
     def __post_init__(self):
         # Convert to Path if string
@@ -184,7 +186,9 @@ class PipelineState:
                 'cutout_size': self.config.cutout_size,
                 'cutout_center': self.config.cutout_center,
                 'sigma_threshold': self.config.sigma_threshold,
-                'bad_flags': self.config.bad_flags
+                'bad_flags': self.config.bad_flags,
+                'use_magnitude': self.config.use_magnitude,
+                'show_errorbars': self.config.show_errorbars
             },
             'query_results': {
                 'observations': [
@@ -247,7 +251,9 @@ class PipelineState:
             cutout_size=data['config'].get('cutout_size'),
             cutout_center=data['config'].get('cutout_center'),
             sigma_threshold=data['config'].get('sigma_threshold', 5.0),
-            bad_flags=data['config'].get('bad_flags', [0, 1, 2, 6, 7, 9, 10, 11, 15])
+            bad_flags=data['config'].get('bad_flags', [0, 1, 2, 6, 7, 9, 10, 11, 15]),
+            use_magnitude=data['config'].get('use_magnitude', False),
+            show_errorbars=data['config'].get('show_errorbars', True)
         )
         
         # Reconstruct query results

@@ -237,7 +237,9 @@ class SPXQueryPipeline:
             plot_path,
             apply_quality_filters=True,
             sigma_threshold=self.config.sigma_threshold,
-            bad_flags=self.config.bad_flags
+            bad_flags=self.config.bad_flags,
+            use_magnitude=self.config.use_magnitude,
+            show_errorbars=self.config.show_errorbars
         )
 
         # Update state
