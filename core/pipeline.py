@@ -229,16 +229,22 @@ class SPXQueryPipeline:
             return
         
         logger.info("Running visualization stage")
-        
-        # Create combined plot
+
+        # Create combined plot with quality control filters
         plot_path = self.results_dir / 'combined_plot.png'
-        create_combined_plot(self.state.photometry_results, plot_path)
-        
+        create_combined_plot(
+            self.state.photometry_results,
+            plot_path,
+            apply_quality_filters=True,
+            sigma_threshold=self.config.sigma_threshold,
+            bad_flags=self.config.bad_flags
+        )
+
         # Update state
         self.state.plot_path = plot_path
         self.state.stage = 'complete'
         self.save_state()
-        
+
         logger.info(f"Visualization saved to {plot_path}")
     
     def resume(self) -> None:
@@ -277,7 +283,9 @@ def run_pipeline(
     log_level: str = "INFO",
     max_processing_workers: int = 10,
     cutout_size: Optional[str] = None,
-    cutout_center: Optional[str] = None
+    cutout_center: Optional[str] = None,
+    sigma_threshold: float = 5.0,
+    bad_flags: Optional[List[int]] = None
 ) -> None:
     """
     Convenience function to run the pipeline.
@@ -306,6 +314,10 @@ def run_pipeline(
         Cutout size parameter (e.g., "200px", "3arcmin")
     cutout_center : str, optional
         Cutout center parameter (e.g., "70,20") or None to use source position
+    sigma_threshold : float
+        Minimum SNR (flux/flux_err) for quality control (default: 5.0)
+    bad_flags : List[int], optional
+        List of bad flag bit positions to reject (default: [0, 1, 2, 6, 7, 9, 10, 11, 15])
     """
     # Set up logging
     setup_logging(log_level)
@@ -321,7 +333,9 @@ def run_pipeline(
         aperture_diameter=aperture_diameter,
         max_processing_workers=max_processing_workers,
         cutout_size=cutout_size,
-        cutout_center=cutout_center
+        cutout_center=cutout_center,
+        sigma_threshold=sigma_threshold,
+        bad_flags=bad_flags if bad_flags is not None else [0, 1, 2, 6, 7, 9, 10, 11, 15]
     )
     
     # Create and run pipeline

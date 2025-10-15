@@ -384,3 +384,156 @@ def estimate_cutout_size_mb(
     except (ValueError, AttributeError) as e:
         logger.warning(f"Could not estimate cutout size for '{cutout_size}': {e}")
         return full_size_mb
+
+# Quality control helper functions
+
+def create_flag_mask(bad_flags: list[int]) -> int:
+    """
+    Convert list of bad flag bit positions to a single integer mask.
+
+    Parameters
+    ----------
+    bad_flags : list[int]
+        List of bad flag bit positions
+
+    Returns
+    -------
+    int
+        Integer mask with all bad flag bits set
+
+    Examples
+    --------
+    >>> create_flag_mask([0, 1, 2])
+    7  # 0b0111
+
+    >>> create_flag_mask([0, 2, 4])
+    21  # 0b10101
+    """
+    mask = 0
+    for bit in bad_flags:
+        mask |= (1 << bit)
+    return mask
+
+
+def check_flag_bits(flag: int, bad_flags_mask: int) -> bool:
+    """
+    Check if any bad flag bits are set in the given flag value.
+
+    Parameters
+    ----------
+    flag : int
+        Combined flag bitmap value
+    bad_flags_mask : int
+        Mask with bad flag bits set (created by create_flag_mask)
+
+    Returns
+    -------
+    bool
+        True if any bad flags are set, False otherwise
+
+    Examples
+    --------
+    >>> mask = create_flag_mask([0, 1, 2])
+    >>> check_flag_bits(0b0000, mask)  # No flags set
+    False
+
+    >>> check_flag_bits(0b0001, mask)  # Bit 0 is set
+    True
+
+    >>> check_flag_bits(0b1000, mask)  # Only bit 3 is set (not in bad mask)
+    False
+    """
+    return (flag & bad_flags_mask) != 0
+
+
+def apply_quality_filters(
+    photometry_results: list,
+    sigma_threshold: float = 5.0,
+    bad_flags: list[int] | None = None
+) -> tuple[list, dict]:
+    """
+    Apply quality control filters to photometry results.
+
+    Filters based on:
+    1. SNR threshold: flux/flux_err >= sigma_threshold
+    2. Flag rejection: reject points with any bad flags set
+
+    Parameters
+    ----------
+    photometry_results : list[PhotometryResult]
+        Input photometry measurements
+    sigma_threshold : float
+        Minimum SNR (flux/flux_err) to accept (default: 5.0)
+    bad_flags : list[int], optional
+        List of bad flag bit positions to reject
+        Default: [0, 1, 2, 6, 7, 9, 10, 11, 15]
+
+    Returns
+    -------
+    filtered_results : list[PhotometryResult]
+        Filtered photometry results
+    filter_stats : dict
+        Statistics about filtering (rejected counts by reason)
+
+    Examples
+    --------
+    >>> from spxquery.core.config import PhotometryResult
+    >>> results = [
+    ...     PhotometryResult(..., flux=10, flux_error=1, flag=0),  # Good
+    ...     PhotometryResult(..., flux=10, flux_error=5, flag=0),  # Low SNR
+    ...     PhotometryResult(..., flux=10, flux_error=1, flag=0b0001),  # Bad flag
+    ... ]
+    >>> filtered, stats = apply_quality_filters(results, sigma_threshold=5.0)
+    >>> len(filtered)
+    1
+    """
+    if bad_flags is None:
+        bad_flags = [0, 1, 2, 6, 7, 9, 10, 11, 15]
+
+    # Convert bad_flags list to mask once for efficient checking
+    bad_flags_mask = create_flag_mask(bad_flags)
+
+    filtered = []
+    rejected_snr = 0
+    rejected_flag = 0
+    rejected_both = 0
+
+    for result in photometry_results:
+        # Calculate SNR
+        if result.flux_error > 0:
+            snr = result.flux / result.flux_error
+        else:
+            snr = 0.0
+
+        # Check filters
+        fails_snr = snr < sigma_threshold
+        fails_flag = check_flag_bits(result.flag, bad_flags_mask)
+
+        if fails_snr and fails_flag:
+            rejected_both += 1
+        elif fails_snr:
+            rejected_snr += 1
+        elif fails_flag:
+            rejected_flag += 1
+        else:
+            # Passed all filters
+            filtered.append(result)
+
+    filter_stats = {
+        'total_input': len(photometry_results),
+        'total_output': len(filtered),
+        'rejected_snr': rejected_snr,
+        'rejected_flag': rejected_flag,
+        'rejected_both': rejected_both,
+        'total_rejected': rejected_snr + rejected_flag + rejected_both,
+        'sigma_threshold': sigma_threshold,
+        'bad_flags': bad_flags,
+        'bad_flags_mask': bad_flags_mask
+    }
+
+    logger.info(
+        f"Quality filtering: {len(photometry_results)} -> {len(filtered)} measurements "
+        f"({filter_stats['total_rejected']} rejected: {rejected_snr} SNR, {rejected_flag} flags, {rejected_both} both)"
+    )
+
+    return filtered, filter_stats

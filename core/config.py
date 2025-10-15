@@ -33,6 +33,8 @@ class QueryConfig:
     max_processing_workers: int = 10  # Number of workers for photometry processing
     cutout_size: Optional[str] = None  # e.g., "200px", "100,200px", "3arcmin", "0.1"
     cutout_center: Optional[str] = None  # e.g., "70,20", "300.5,120px" (optional, defaults to source position)
+    sigma_threshold: float = 5.0  # Minimum SNR (flux/flux_err) for quality control
+    bad_flags: List[int] = field(default_factory=lambda: [0, 1, 2, 6, 7, 9, 10, 11, 15])  # Flags to reject
     
     def __post_init__(self):
         # Convert to Path if string
@@ -62,6 +64,10 @@ class QueryConfig:
             if not validate_cutout_center(self.cutout_center):
                 raise ValueError(f"Invalid cutout_center format: '{self.cutout_center}'. "
                                "Expected format: <x>,<y>[units], e.g., '70,20', '300.5,120px'")
+
+        # Validate quality control parameters
+        if self.sigma_threshold <= 0:
+            raise ValueError(f"Sigma threshold must be positive, got {self.sigma_threshold}")
 
 
 @dataclass
@@ -176,7 +182,9 @@ class PipelineState:
                 'max_download_workers': self.config.max_download_workers,
                 'max_processing_workers': self.config.max_processing_workers,
                 'cutout_size': self.config.cutout_size,
-                'cutout_center': self.config.cutout_center
+                'cutout_center': self.config.cutout_center,
+                'sigma_threshold': self.config.sigma_threshold,
+                'bad_flags': self.config.bad_flags
             },
             'query_results': {
                 'observations': [
@@ -237,7 +245,9 @@ class PipelineState:
             max_download_workers=data['config']['max_download_workers'],
             max_processing_workers=data['config'].get('max_processing_workers', 10),
             cutout_size=data['config'].get('cutout_size'),
-            cutout_center=data['config'].get('cutout_center')
+            cutout_center=data['config'].get('cutout_center'),
+            sigma_threshold=data['config'].get('sigma_threshold', 5.0),
+            bad_flags=data['config'].get('bad_flags', [0, 1, 2, 6, 7, 9, 10, 11, 15])
         )
         
         # Reconstruct query results

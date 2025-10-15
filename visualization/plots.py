@@ -86,6 +86,9 @@ def create_spectrum_plot(
     ax: Optional[Axes] = None,
     apply_clipping: bool = True,
     sigma: float = 3.0,
+    apply_quality_filters: bool = True,
+    sigma_threshold: float = 5.0,
+    bad_flags_mask: Optional[int] = None,
 ) -> Axes:
     """
     Create spectrum plot (wavelength vs flux).
@@ -100,6 +103,12 @@ def create_spectrum_plot(
         Whether to apply sigma clipping to remove outliers
     sigma : float
         Number of standard deviations for sigma clipping
+    apply_quality_filters : bool
+        Whether to classify points as good/rejected based on QC filters
+    sigma_threshold : float
+        Minimum SNR (flux/flux_err) for quality control
+    bad_flags_mask : int, optional
+        Integer mask with bad flag bits set (created by create_flag_mask)
 
     Returns
     -------
@@ -113,16 +122,49 @@ def create_spectrum_plot(
     if apply_clipping:
         photometry_results = apply_sigma_clipping(photometry_results, sigma=sigma)
 
-    # Separate regular measurements and upper limits
-    regular = [p for p in photometry_results if not p.is_upper_limit]
-    upper_limits = [p for p in photometry_results if p.is_upper_limit]
+    # Classify points if quality filtering is enabled
+    if apply_quality_filters and bad_flags_mask is not None:
+        from ..utils.helpers import check_flag_bits
 
-    # Plot regular measurements with error bars
-    if regular:
-        wavelengths = [p.wavelength for p in regular]
-        fluxes = [p.flux for p in regular]
-        flux_errors = [p.flux_error for p in regular]
-        bandwidths = [p.bandwidth for p in regular]
+        # Separate into good and rejected
+        good_regular = []
+        rejected_regular = []
+        good_upper_limits = []
+        rejected_upper_limits = []
+
+        for p in photometry_results:
+            # Calculate SNR
+            snr = p.flux / p.flux_error if p.flux_error > 0 else 0.0
+
+            # Check filters
+            fails_snr = snr < sigma_threshold
+            fails_flag = check_flag_bits(p.flag, bad_flags_mask)
+            is_rejected = fails_snr or fails_flag
+
+            # Classify
+            if p.is_upper_limit:
+                if is_rejected:
+                    rejected_upper_limits.append(p)
+                else:
+                    good_upper_limits.append(p)
+            else:
+                if is_rejected:
+                    rejected_regular.append(p)
+                else:
+                    good_regular.append(p)
+    else:
+        # No quality filtering - all points are "good"
+        good_regular = [p for p in photometry_results if not p.is_upper_limit]
+        good_upper_limits = [p for p in photometry_results if p.is_upper_limit]
+        rejected_regular = []
+        rejected_upper_limits = []
+
+    # Plot good regular measurements with error bars
+    if good_regular:
+        wavelengths = [p.wavelength for p in good_regular]
+        fluxes = [p.flux for p in good_regular]
+        flux_errors = [p.flux_error for p in good_regular]
+        bandwidths = [p.bandwidth for p in good_regular]
 
         ax.errorbar(
             wavelengths,
@@ -136,11 +178,30 @@ def create_spectrum_plot(
             alpha=0.8,
         )
 
-    # Plot upper limits
-    if upper_limits:
-        ul_wavelengths = [p.wavelength for p in upper_limits]
-        ul_fluxes = [p.flux + p.flux_error for p in upper_limits]  # Upper limit value
-        ul_bandwidths = [p.bandwidth for p in upper_limits]
+    # Plot rejected regular measurements as crosses
+    if rejected_regular:
+        wavelengths = [p.wavelength for p in rejected_regular]
+        fluxes = [p.flux for p in rejected_regular]
+        bandwidths = [p.bandwidth for p in rejected_regular]
+
+        ax.errorbar(
+            wavelengths,
+            fluxes,
+            xerr=bandwidths,
+            yerr=None,
+            fmt="x",
+            markersize=4,
+            capsize=0,
+            label="Rejected",
+            alpha=0.5,
+            color="gray",
+        )
+
+    # Plot good upper limits
+    if good_upper_limits:
+        ul_wavelengths = [p.wavelength for p in good_upper_limits]
+        ul_fluxes = [p.flux + p.flux_error for p in good_upper_limits]  # Upper limit value
+        ul_bandwidths = [p.bandwidth for p in good_upper_limits]
 
         ax.errorbar(
             ul_wavelengths,
@@ -153,6 +214,25 @@ def create_spectrum_plot(
             label="Upper limits",
             alpha=0.8,
             color="red",
+        )
+
+    # Plot rejected upper limits as small crosses
+    if rejected_upper_limits:
+        ul_wavelengths = [p.wavelength for p in rejected_upper_limits]
+        ul_fluxes = [p.flux + p.flux_error for p in rejected_upper_limits]
+        ul_bandwidths = [p.bandwidth for p in rejected_upper_limits]
+
+        ax.errorbar(
+            ul_wavelengths,
+            ul_fluxes,
+            xerr=ul_bandwidths,
+            yerr=None,
+            fmt="x",
+            markersize=4,
+            capsize=0,
+            label="Rejected (UL)",
+            alpha=0.5,
+            color="lightcoral",
         )
 
     # Formatting
@@ -173,6 +253,9 @@ def create_lightcurve_plot(
     ax: Optional[Axes] = None,
     apply_clipping: bool = True,
     sigma: float = 3.0,
+    apply_quality_filters: bool = True,
+    sigma_threshold: float = 5.0,
+    bad_flags_mask: Optional[int] = None,
 ) -> Axes:
     """
     Create light curve plot (time vs flux) color-coded by wavelength.
@@ -187,6 +270,12 @@ def create_lightcurve_plot(
         Whether to apply sigma clipping to remove outliers
     sigma : float
         Number of standard deviations for sigma clipping
+    apply_quality_filters : bool
+        Whether to classify points as good/rejected based on QC filters
+    sigma_threshold : float
+        Minimum SNR (flux/flux_err) for quality control
+    bad_flags_mask : int, optional
+        Integer mask with bad flag bits set (created by create_flag_mask)
 
     Returns
     -------
@@ -204,15 +293,42 @@ def create_lightcurve_plot(
     if apply_clipping:
         photometry_results = apply_sigma_clipping(photometry_results, sigma=sigma)
 
+    # Classify points if quality filtering is enabled
+    if apply_quality_filters and bad_flags_mask is not None:
+        from ..utils.helpers import check_flag_bits
+
+        # Separate into good and rejected
+        good_points = []
+        rejected_points = []
+
+        for p in photometry_results:
+            # Calculate SNR
+            snr = p.flux / p.flux_error if p.flux_error > 0 else 0.0
+
+            # Check filters
+            fails_snr = snr < sigma_threshold
+            fails_flag = check_flag_bits(p.flag, bad_flags_mask)
+            is_rejected = fails_snr or fails_flag
+
+            if is_rejected:
+                rejected_points.append(p)
+            else:
+                good_points.append(p)
+    else:
+        # No quality filtering - all points are "good"
+        good_points = photometry_results
+        rejected_points = []
+
     # Get colormap for wavelength coding
     cmap = cm.get_cmap(WAVELENGTH_CMAP)
     norm = Normalize(vmin=WAVELENGTH_RANGE[0], vmax=WAVELENGTH_RANGE[1])
 
     # Sort by MJD for proper time ordering
-    sorted_results = sorted(photometry_results, key=lambda x: x.mjd)
+    good_sorted = sorted(good_points, key=lambda x: x.mjd)
+    rejected_sorted = sorted(rejected_points, key=lambda x: x.mjd)
 
-    # Plot each point with color based on wavelength
-    for result in sorted_results:
+    # Plot good points with color based on wavelength
+    for result in good_sorted:
         color = cmap(norm(result.wavelength))
 
         if result.is_upper_limit:
@@ -233,6 +349,17 @@ def create_lightcurve_plot(
                 alpha=0.8,
             )
 
+    # Plot rejected points as small gray crosses
+    for result in rejected_sorted:
+        ax.plot(
+            result.mjd,
+            result.flux,
+            "x",
+            color="gray",
+            markersize=4,
+            alpha=0.5,
+        )
+
     # Add colorbar for wavelength
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
@@ -245,8 +372,9 @@ def create_lightcurve_plot(
     ax.set_title("SPHEREx Light Curve", fontsize=14)
     ax.grid(True, alpha=0.3)
 
-    # Add some padding to x-axis
-    mjds = [p.mjd for p in sorted_results]
+    # Add some padding to x-axis (use all points for range)
+    all_sorted = sorted(photometry_results, key=lambda x: x.mjd)
+    mjds = [p.mjd for p in all_sorted]
     mjd_range = max(mjds) - min(mjds)
     if mjd_range > 0:
         ax.set_xlim(min(mjds) - 0.05 * mjd_range, max(mjds) + 0.05 * mjd_range)
@@ -260,14 +388,22 @@ def create_combined_plot(
     figsize: Tuple[float, float] = (10, 8),
     apply_clipping: bool = True,
     sigma: float = 3.0,
+    apply_quality_filters: bool = True,
+    sigma_threshold: float = 5.0,
+    bad_flags: Optional[List[int]] = None,
 ) -> Figure:
     """
     Create combined plot with spectrum and light curve.
 
+    Quality control filters classify points as good or rejected:
+    - Good points: plotted normally (filled circles)
+    - Rejected points: plotted as small gray crosses
+    - All points appear in the plot and are saved in CSV output
+
     Parameters
     ----------
     photometry_results : List[PhotometryResult]
-        Photometry measurements
+        Photometry measurements (all points included)
     output_path : Path, optional
         Path to save figure. If None, figure is not saved.
     figsize : Tuple[float, float]
@@ -276,22 +412,70 @@ def create_combined_plot(
         Whether to apply sigma clipping to remove outliers
     sigma : float
         Number of standard deviations for sigma clipping
+    apply_quality_filters : bool
+        Whether to apply quality control filters (SNR and flags)
+    sigma_threshold : float
+        Minimum SNR (flux/flux_err) for quality control (default: 5.0)
+    bad_flags : List[int], optional
+        List of bad flag bit positions to reject
+        Default: [0, 1, 2, 6, 7, 9, 10, 11, 15]
 
     Returns
     -------
     Figure
         Matplotlib figure with both plots
     """
+    # Create flag mask if quality filtering is requested
+    bad_flags_mask = None
+    if apply_quality_filters:
+        from ..utils.helpers import create_flag_mask, check_flag_bits
+
+        if bad_flags is None:
+            bad_flags = [0, 1, 2, 6, 7, 9, 10, 11, 15]
+
+        bad_flags_mask = create_flag_mask(bad_flags)
+
+        # Log filtering statistics
+        good_count = 0
+        rejected_count = 0
+        for p in photometry_results:
+            snr = p.flux / p.flux_error if p.flux_error > 0 else 0.0
+            fails_snr = snr < sigma_threshold
+            fails_flag = check_flag_bits(p.flag, bad_flags_mask)
+            if fails_snr or fails_flag:
+                rejected_count += 1
+            else:
+                good_count += 1
+
+        logger.info(f"Quality filtering: {len(photometry_results)} total points "
+                   f"({good_count} good, {rejected_count} rejected - shown as crosses)")
+
     # Create figure with two subplots using constrained layout to handle colorbars
     fig, (ax1, ax2) = plt.subplots(
         2, 1, figsize=figsize, gridspec_kw={"height_ratios": [1, 1]}, constrained_layout=True
     )
 
-    # Create spectrum plot (top)
-    create_spectrum_plot(photometry_results, ax1, apply_clipping=apply_clipping, sigma=sigma)
+    # Create spectrum plot (top) with QC classification
+    create_spectrum_plot(
+        photometry_results,
+        ax1,
+        apply_clipping=apply_clipping,
+        sigma=sigma,
+        apply_quality_filters=apply_quality_filters,
+        sigma_threshold=sigma_threshold,
+        bad_flags_mask=bad_flags_mask
+    )
 
-    # Create light curve plot (bottom)
-    create_lightcurve_plot(photometry_results, ax2, apply_clipping=apply_clipping, sigma=sigma)
+    # Create light curve plot (bottom) with QC classification
+    create_lightcurve_plot(
+        photometry_results,
+        ax2,
+        apply_clipping=apply_clipping,
+        sigma=sigma,
+        apply_quality_filters=apply_quality_filters,
+        sigma_threshold=sigma_threshold,
+        bad_flags_mask=bad_flags_mask
+    )
 
     # Save if requested
     if output_path:

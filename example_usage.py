@@ -162,10 +162,70 @@ def example_custom_processing():
         print(f"\nNote: URL includes cutout parameters (center and size)")
 
 
-# Example 6: Various cutout size formats
+# Example 6: Quality control filtering
+def example_quality_control():
+    """Example showing quality control filtering options."""
+    print("\nExample 6: Quality Control Filtering")
+    print("-" * 50)
+
+    setup_logging("INFO")
+    source = Source(ra=304.693508808, dec=42.4436872991, name="QC_Test_Source")
+
+    # Example A: Default QC settings (recommended)
+    print("\nA. Default QC settings:")
+    config_default = QueryConfig(
+        source=source,
+        output_dir=Path("qc_default"),
+        cutout_size="200px",
+        sigma_threshold=5.0,  # Default: mark measurements with SNR < 5
+        bad_flags=[0, 1, 2, 6, 7, 9, 10, 11, 15]  # Default bad flags
+    )
+    print(f"   sigma_threshold: {config_default.sigma_threshold}")
+    print(f"   bad_flags: {config_default.bad_flags}")
+    print(f"   Filters: SNR < 5.0 and bad pixel flags")
+
+    # Example B: Stringent QC (high quality requirements)
+    print("\nB. Stringent QC (high quality):")
+    config_strict = QueryConfig(
+        source=source,
+        output_dir=Path("qc_strict"),
+        cutout_size="200px",
+        sigma_threshold=10.0,  # Higher SNR requirement
+    )
+    print(f"   sigma_threshold: {config_strict.sigma_threshold}")
+    print(f"   Higher SNR threshold for cleaner data")
+
+    # Example C: Relaxed QC (more data points)
+    print("\nC. Relaxed QC (more data points):")
+    config_relaxed = QueryConfig(
+        source=source,
+        output_dir=Path("qc_relaxed"),
+        cutout_size="200px",
+        sigma_threshold=3.0,  # Lower SNR requirement
+        bad_flags=[0, 1, 2]  # Only most critical flags
+    )
+    print(f"   sigma_threshold: {config_relaxed.sigma_threshold}")
+    print(f"   bad_flags: {config_relaxed.bad_flags}")
+    print(f"   More permissive filtering for fainter sources")
+
+    print("\n**Quality Control Filters Applied During Visualization:**")
+    print("  - Good points: Plotted as filled circles (normal markers)")
+    print("  - Rejected points: Plotted as small gray crosses")
+    print("  - CSV output: Contains ALL measurements (no data removed)")
+    print("\n  Quality criteria:")
+    print("    1. SNR filter: Marks flux/flux_err < sigma_threshold")
+    print("    2. Flag filter: Marks pixels with bad quality flags")
+    print("\n  Default bad flags:")
+    print("    - 0,1,2: Saturation, bad pixels")
+    print("    - 6,7: Cosmic rays, non-linearity")
+    print("    - 9,10,11: Edge effects")
+    print("    - 15: Other data quality issues")
+
+
+# Example 7: Various cutout size formats
 def example_cutout_formats():
     """Example showing different cutout size formats."""
-    print("\nExample 6: Different cutout size formats")
+    print("\nExample 7: Different cutout size formats")
     print("-" * 50)
 
     setup_logging("INFO")
@@ -233,8 +293,9 @@ if __name__ == "__main__":
     # Uncomment the example you want to run:
 
     # example_simple()  # Basic usage without cutouts
-    example_cutout()  # 5 arcmin square cutout example
+    # example_cutout()  # 5 arcmin square cutout example
     # example_step_by_step()  # Step-by-step with 200px cutout
     # example_resume()  # Resume from saved state
     # example_custom_processing()  # Custom processing with 5 arcmin cutout
+    example_quality_control()  # Quality control filtering options
     # example_cutout_formats()  # Various cutout size formats
