@@ -199,7 +199,7 @@ def example_cutout_formats():
         cutout_size="3arcmin",
     )
     print(f"   cutout_size: {config_arcmin.cutout_size}")
-    print(f"   Approximately 29×29 pixels at SPHEREx scale (~6.2\"/pixel)")
+    print(f"   Approximately 29x29 pixels at SPHEREx scale (~6.2\"/pixel)")
 
     # Example D: 5 arcminute cutout (good balance of coverage and efficiency)
     print("\nD. 5 arcminute square cutout:")
@@ -209,7 +209,7 @@ def example_cutout_formats():
         cutout_size="5arcmin",
     )
     print(f"   cutout_size: {config_5arcmin.cutout_size}")
-    print(f"   Approximately 48×48 pixels at SPHEREx scale (~6.2\"/pixel)")
+    print(f"   Approximately 48x48 pixels at SPHEREx scale (~6.2\"/pixel)")
     print(f"   Good balance between coverage and file size")
 
     # Example E: Custom center position
