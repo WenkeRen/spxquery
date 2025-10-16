@@ -24,6 +24,56 @@ WAVELENGTH_CMAP = "rainbow"  # Colormap for wavelength coding
 WAVELENGTH_RANGE = (0.75, 5.0)  # SPHEREx wavelength range in microns
 
 
+def calculate_smart_ylimits(
+    y_values: List[float],
+    percentile_range: Tuple[float, float] = (1.0, 99.0),
+    padding_fraction: float = 0.1,
+) -> Tuple[float, float]:
+    """
+    Calculate smart y-axis limits based on percentiles to exclude extreme outliers.
+
+    Parameters
+    ----------
+    y_values : List[float]
+        Y-axis values to analyze
+    percentile_range : Tuple[float, float]
+        Lower and upper percentiles to use for limits (default: 1st to 99th)
+    padding_fraction : float
+        Fraction of range to add as padding (default: 0.1 = 10%)
+
+    Returns
+    -------
+    Tuple[float, float]
+        (ymin, ymax) limits for y-axis
+    """
+    # Filter out NaN and infinite values
+    valid_values = [v for v in y_values if np.isfinite(v)]
+
+    if not valid_values:
+        return (0, 1)  # Default range if no valid data
+
+    # Calculate percentile-based limits
+    y_min = np.percentile(valid_values, percentile_range[0])
+    y_max = np.percentile(valid_values, percentile_range[1])
+
+    # Add padding
+    y_range = y_max - y_min
+    if y_range > 0:
+        padding = y_range * padding_fraction
+        y_min -= padding
+        y_max += padding
+    else:
+        # All values are the same, add symmetric padding
+        if y_min != 0:
+            y_min *= 0.9
+            y_max *= 1.1
+        else:
+            y_min = -0.1
+            y_max = 0.1
+
+    return (y_min, y_max)
+
+
 def apply_sigma_clipping(
     photometry_results: List[PhotometryResult], sigma: float = 3.0, maxiters: int = 10
 ) -> List[PhotometryResult]:
@@ -333,6 +383,25 @@ def create_spectrum_plot(
     # Set x-axis limits to SPHEREx range
     ax.set_xlim(0.7, 5.1)
 
+    # Set smart y-axis limits based on percentiles to handle outliers
+    all_y_values = []
+
+    # Collect all y-values for limit calculation
+    if use_magnitude:
+        all_y_values.extend([p.mag_ab for p in good_regular if p.mag_ab is not None])
+        all_y_values.extend([p.mag_ab for p in rejected_regular if p.mag_ab is not None])
+        all_y_values.extend([p.mag_ab for p in good_upper_limits if p.mag_ab is not None])
+        all_y_values.extend([p.mag_ab for p in rejected_upper_limits if p.mag_ab is not None])
+    else:
+        all_y_values.extend([p.flux for p in good_regular])
+        all_y_values.extend([p.flux for p in rejected_regular])
+        all_y_values.extend([p.flux + p.flux_error for p in good_upper_limits])
+        all_y_values.extend([p.flux + p.flux_error for p in rejected_upper_limits])
+
+    if all_y_values:
+        y_min, y_max = calculate_smart_ylimits(all_y_values, percentile_range=(1.0, 99.0))
+        ax.set_ylim(y_min, y_max)
+
     return ax
 
 
@@ -543,6 +612,31 @@ def create_lightcurve_plot(
     mjd_range = max(mjds) - min(mjds)
     if mjd_range > 0:
         ax.set_xlim(min(mjds) - 0.05 * mjd_range, max(mjds) + 0.05 * mjd_range)
+
+    # Set smart y-axis limits based on percentiles to handle outliers
+    all_y_values = []
+
+    # Collect all y-values for limit calculation
+    for result in good_points:
+        if use_magnitude:
+            if result.mag_ab is not None:
+                all_y_values.append(result.mag_ab)
+        else:
+            if result.is_upper_limit:
+                all_y_values.append(result.flux + result.flux_error)
+            else:
+                all_y_values.append(result.flux)
+
+    for result in rejected_points:
+        if use_magnitude:
+            if result.mag_ab is not None:
+                all_y_values.append(result.mag_ab)
+        else:
+            all_y_values.append(result.flux)
+
+    if all_y_values:
+        y_min, y_max = calculate_smart_ylimits(all_y_values, percentile_range=(1.0, 99.0))
+        ax.set_ylim(y_min, y_max)
 
     return ax
 

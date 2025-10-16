@@ -15,9 +15,9 @@ from tqdm import tqdm
 
 from ..core.config import Source, PhotometryResult
 from .fits_handler import (
-    read_spherex_mef, get_pixel_coordinates, 
+    read_spherex_mef, get_pixel_coordinates,
     get_wavelength_at_position, subtract_zodiacal_background,
-    create_background_mask, get_aperture_solid_angle
+    create_background_mask, get_pixel_scale_at_position
 )
 from .magnitudes import calculate_ab_magnitude_from_jy
 
@@ -460,20 +460,23 @@ def extract_source_photometry(
             return None
         
         logger.debug(f"Local background: {bg_level:.6f} ± {bg_error:.6f} MJy/sr from {n_bg_pixels} pixels")
-        
+
         # Convert from MJy/sr to Jansky for magnitude calculation
-        # Calculate aperture solid angle using WCS at the source position
-        aperture_solid_angle_sr = get_aperture_solid_angle(
-            mef.spatial_wcs, x, y, aperture_radius
-        )
-        
-        # Convert flux from MJy/sr to Jansky: MJy/sr * sr * 1e6 = Jy
-        flux_jy = flux_mjy_sr * aperture_solid_angle_sr * 1e6  # Jansky
-        flux_error_jy = flux_error_mjy_sr * aperture_solid_angle_sr * 1e6  # Jansky
-        
+        # The aperture photometry returns a sum: Σ(surface_brightness_i) across pixels
+        # To convert to flux: multiply by solid angle PER PIXEL, not total aperture
+        pixel_scale_arcsec = get_pixel_scale_at_position(mef.spatial_wcs, x, y)
+        pixel_solid_angle_sr = (pixel_scale_arcsec / 206265.0) ** 2  # Convert arcsec to radians, then square
+
+        # Convert: (MJy/sr × pixels) × (sr/pixel) = MJy → Jy
+        flux_mjy = flux_mjy_sr * pixel_solid_angle_sr
+        flux_error_mjy = flux_error_mjy_sr * pixel_solid_angle_sr
+
+        flux_jy = flux_mjy * 1e6  # Jansky
+        flux_error_jy = flux_error_mjy * 1e6  # Jansky
+
         logger.debug(
-            f"Unit conversion: {flux_mjy_sr:.6f} MJy/sr → {flux_jy:.6f} Jy "
-            f"(solid angle = {aperture_solid_angle_sr:.2e} sr)"
+            f"Unit conversion: {flux_mjy_sr:.6f} MJy/sr·pix → {flux_jy:.6f} Jy "
+            f"(pixel solid angle = {pixel_solid_angle_sr:.2e} sr/pix)"
         )
         
         # Process flags

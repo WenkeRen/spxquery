@@ -243,42 +243,6 @@ def get_pixel_scale_at_position(wcs: WCS, x: float, y: float) -> float:
         return 6.2  # Fallback to nominal SPHEREx pixel scale
 
 
-def get_aperture_solid_angle(wcs: WCS, x: float, y: float, aperture_radius_pixels: float) -> float:
-    """
-    Calculate the solid angle of a circular aperture at a given position.
-
-    Parameters
-    ----------
-    wcs : WCS
-        World Coordinate System object
-    x, y : float
-        Pixel coordinates (0-based)
-    aperture_radius_pixels : float
-        Aperture radius in pixels
-
-    Returns
-    -------
-    float
-        Aperture solid angle in steradians
-    """
-    # Get pixel scale at this position
-    pixel_scale_arcsec = get_pixel_scale_at_position(wcs, x, y)
-
-    # Calculate aperture radius in arcseconds
-    aperture_radius_arcsec = aperture_radius_pixels * pixel_scale_arcsec
-
-    # Calculate solid angle in steradians
-    # Ω = π × (θ/206265)² where θ is in arcsec and 206265 arcsec/radian
-    solid_angle_sr = np.pi * (aperture_radius_arcsec / 206265.0) ** 2
-
-    logger.debug(
-        f"Aperture solid angle: {aperture_radius_pixels:.1f} pix "
-        f"({aperture_radius_arcsec:.2f} arcsec) = {solid_angle_sr:.2e} sr"
-    )
-
-    return solid_angle_sr
-
-
 def get_flag_info(flag_value: int) -> Dict[str, bool]:
     """
     Decode flag bitmap into individual flags.
