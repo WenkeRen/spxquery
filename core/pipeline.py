@@ -283,11 +283,14 @@ def run_pipeline(
     source_name: Optional[str] = None,
     resume: bool = False,
     log_level: str = "INFO",
+    max_download_workers: int = 4,
     max_processing_workers: int = 10,
     cutout_size: Optional[str] = None,
     cutout_center: Optional[str] = None,
     sigma_threshold: float = 5.0,
-    bad_flags: Optional[List[int]] = None
+    bad_flags: Optional[List[int]] = None,
+    use_magnitude: bool = False,
+    show_errorbars: bool = True,
 ) -> None:
     """
     Convenience function to run the pipeline.
@@ -310,6 +313,8 @@ def run_pipeline(
         Whether to resume from saved state
     log_level : str
         Logging level
+    max_download_workers : int
+        Number of worker threads for downloading (default: 4)
     max_processing_workers : int
         Number of worker processes for photometry (default: 10)
     cutout_size : str, optional
@@ -320,6 +325,10 @@ def run_pipeline(
         Minimum SNR (flux/flux_err) for quality control (default: 5.0)
     bad_flags : List[int], optional
         List of bad flag bit positions to reject (default: [0, 1, 2, 6, 7, 9, 10, 11, 15])
+    use_magnitude : bool
+        If True, plot AB magnitude instead of flux (default: False)
+    show_errorbars : bool
+        If True, show errorbars on plots (default: True)
     """
     # Set up logging
     setup_logging(log_level)
@@ -333,11 +342,14 @@ def run_pipeline(
         output_dir=output_dir or Path.cwd(),
         bands=bands,
         aperture_diameter=aperture_diameter,
+        max_download_workers=max_download_workers,
         max_processing_workers=max_processing_workers,
         cutout_size=cutout_size,
         cutout_center=cutout_center,
         sigma_threshold=sigma_threshold,
-        bad_flags=bad_flags if bad_flags is not None else [0, 1, 2, 6, 7, 9, 10, 11, 15]
+        bad_flags=bad_flags if bad_flags is not None else [0, 1, 2, 6, 7, 9, 10, 11, 15],
+        use_magnitude=use_magnitude,
+        show_errorbars=show_errorbars
     )
     
     # Create and run pipeline
