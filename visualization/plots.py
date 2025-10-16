@@ -400,7 +400,11 @@ def create_spectrum_plot(
 
     if all_y_values:
         y_min, y_max = calculate_smart_ylimits(all_y_values, percentile_range=(1.0, 99.0))
-        ax.set_ylim(y_min, y_max)
+        # For magnitude plots, axis is inverted so we need to reverse the order
+        if use_magnitude:
+            ax.set_ylim(y_max, y_min)  # Reversed for inverted axis
+        else:
+            ax.set_ylim(y_min, y_max)
 
     return ax
 
@@ -636,7 +640,11 @@ def create_lightcurve_plot(
 
     if all_y_values:
         y_min, y_max = calculate_smart_ylimits(all_y_values, percentile_range=(1.0, 99.0))
-        ax.set_ylim(y_min, y_max)
+        # For magnitude plots, axis is inverted so we need to reverse the order
+        if use_magnitude:
+            ax.set_ylim(y_max, y_min)  # Reversed for inverted axis
+        else:
+            ax.set_ylim(y_min, y_max)
 
     return ax
 
