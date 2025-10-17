@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """
 Example usage of SPXQuery package for SPHEREx time-domain analysis.
 """
@@ -53,13 +52,13 @@ def example_cutout():
         cutout_size="5arcmin",  # 5 arcminute square cutout
     )
 
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  Source: RA={source.ra}, Dec={source.dec}")
     print(f"  Cutout size: {config.cutout_size}")
     print(f"  Cutout center: {config.cutout_center or 'Source position (default)'}")
-    print(f"\nNote: 5 arcmin cutout at SPHEREx pixel scale (~6.2\"/pixel)")
-    print(f"      Approximate size: ~48×48 pixels")
-    print(f"      Storage: Much smaller than full 2040×2040 pixel image\n")
+    print('\nNote: 5 arcmin cutout at SPHEREx pixel scale (~6.2"/pixel)')
+    print("      Approximate size: ~48×48 pixels")
+    print("      Storage: Much smaller than full 2040×2040 pixel image\n")
 
     # Create and run pipeline
     pipeline = SPXQueryPipeline(config)
@@ -88,9 +87,9 @@ def example_step_by_step():
         cutout_size="200px",  # 200×200 pixel cutout (recommended for point sources)
     )
 
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  Cutout size: {config.cutout_size}")
-    print(f"  Storage savings: ~70 MB → ~0.7 MB per file (99% reduction)\n")
+    print("  Storage savings: ~70 MB → ~0.7 MB per file (99% reduction)\n")
 
     # Create pipeline
     pipeline = SPXQueryPipeline(config)
@@ -159,7 +158,7 @@ def example_custom_processing():
         obs, url = urls[0]
         print(f"\nExample observation: {obs.obs_id}")
         print(f"Download URL: {url[:120]}...")  # Show first 120 chars
-        print(f"\nNote: URL includes cutout parameters (center and size)")
+        print("\nNote: URL includes cutout parameters (center and size)")
 
 
 # Example 6: Quality control filtering
@@ -178,11 +177,11 @@ def example_quality_control():
         output_dir=Path("qc_default"),
         cutout_size="200px",
         sigma_threshold=5.0,  # Default: mark measurements with SNR < 5
-        bad_flags=[0, 1, 2, 6, 7, 9, 10, 11, 15]  # Default bad flags
+        bad_flags=[0, 1, 2, 6, 7, 9, 10, 11, 15],  # Default bad flags
     )
     print(f"   sigma_threshold: {config_default.sigma_threshold}")
     print(f"   bad_flags: {config_default.bad_flags}")
-    print(f"   Filters: SNR < 5.0 and bad pixel flags")
+    print("   Filters: SNR < 5.0 and bad pixel flags")
 
     # Example B: Stringent QC (high quality requirements)
     print("\nB. Stringent QC (high quality):")
@@ -193,7 +192,7 @@ def example_quality_control():
         sigma_threshold=10.0,  # Higher SNR requirement
     )
     print(f"   sigma_threshold: {config_strict.sigma_threshold}")
-    print(f"   Higher SNR threshold for cleaner data")
+    print("   Higher SNR threshold for cleaner data")
 
     # Example C: Relaxed QC (more data points)
     print("\nC. Relaxed QC (more data points):")
@@ -202,11 +201,11 @@ def example_quality_control():
         output_dir=Path("qc_relaxed"),
         cutout_size="200px",
         sigma_threshold=3.0,  # Lower SNR requirement
-        bad_flags=[0, 1, 2]  # Only most critical flags
+        bad_flags=[0, 1, 2],  # Only most critical flags
     )
     print(f"   sigma_threshold: {config_relaxed.sigma_threshold}")
     print(f"   bad_flags: {config_relaxed.bad_flags}")
-    print(f"   More permissive filtering for fainter sources")
+    print("   More permissive filtering for fainter sources")
 
     print("\n**Quality Control Filters Applied During Visualization:**")
     print("  - Good points: Plotted as filled circles (normal markers)")
@@ -239,7 +238,7 @@ def example_cutout_formats():
         cutout_size="200px",
     )
     print(f"   cutout_size: {config_px.cutout_size}")
-    print(f"   Estimated size: ~0.7 MB per file (vs 70 MB full image)")
+    print("   Estimated size: ~0.7 MB per file (vs 70 MB full image)")
 
     # Example B: Rectangular pixel cutout
     print("\nB. 300×400 pixel rectangular cutout:")
@@ -249,7 +248,7 @@ def example_cutout_formats():
         cutout_size="300,400px",
     )
     print(f"   cutout_size: {config_rect.cutout_size}")
-    print(f"   Estimated size: ~2.0 MB per file")
+    print("   Estimated size: ~2.0 MB per file")
 
     # Example C: Angular cutout (arcminutes)
     print("\nC. 3 arcminute square cutout:")
@@ -259,7 +258,7 @@ def example_cutout_formats():
         cutout_size="3arcmin",
     )
     print(f"   cutout_size: {config_arcmin.cutout_size}")
-    print(f"   Approximately 29x29 pixels at SPHEREx scale (~6.2\"/pixel)")
+    print('   Approximately 29x29 pixels at SPHEREx scale (~6.2"/pixel)')
 
     # Example D: 5 arcminute cutout (good balance of coverage and efficiency)
     print("\nD. 5 arcminute square cutout:")
@@ -269,8 +268,8 @@ def example_cutout_formats():
         cutout_size="5arcmin",
     )
     print(f"   cutout_size: {config_5arcmin.cutout_size}")
-    print(f"   Approximately 48x48 pixels at SPHEREx scale (~6.2\"/pixel)")
-    print(f"   Good balance between coverage and file size")
+    print('   Approximately 48x48 pixels at SPHEREx scale (~6.2"/pixel)')
+    print("   Good balance between coverage and file size")
 
     # Example E: Custom center position
     print("\nE. Cutout with custom center:")
@@ -282,7 +281,7 @@ def example_cutout_formats():
     )
     print(f"   cutout_size: {config_custom.cutout_size}")
     print(f"   cutout_center: {config_custom.cutout_center}")
-    print(f"   (Center offset from source position)")
+    print("   (Center offset from source position)")
 
 
 if __name__ == "__main__":
