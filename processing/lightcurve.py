@@ -209,10 +209,10 @@ def load_lightcurve_from_csv(csv_path: Path) -> List[PhotometryResult]:
                 flag=int(row['flag']),
                 pix_x=float(row['pix_x']),
                 pix_y=float(row['pix_y']),
-                is_upper_limit=bool(row['is_upper_limit']),
                 mag_ab=mag_ab,
                 mag_ab_error=mag_ab_error
             )
+            # Note: is_upper_limit is a computed property (flux_error > flux), not a constructor parameter
             photometry_results.append(result)
         
         logger.info(f"Loaded {len(photometry_results)} photometry results from {csv_path}")

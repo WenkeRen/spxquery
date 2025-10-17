@@ -221,19 +221,39 @@ class SPXQueryPipeline:
                 logger.info("Loading photometry results from saved lightcurve CSV")
                 self.state.photometry_results = load_lightcurve_from_csv(csv_path)
                 self.state.csv_path = csv_path
-            
+
         if not self.state.photometry_results:
             logger.warning("No photometry results available for visualization")
             self.state.stage = 'complete'
             self.save_state()
             return
-        
+
         logger.info("Running visualization stage")
+
+        # Filter photometry results by configured bands
+        photometry_results = self.state.photometry_results
+        if self.config.bands is not None:
+            # Only keep results for bands in config
+            original_count = len(photometry_results)
+            photometry_results = [
+                r for r in photometry_results
+                if r.band in self.config.bands
+            ]
+            logger.info(
+                f"Filtered photometry results by bands {self.config.bands}: "
+                f"{original_count} -> {len(photometry_results)} measurements"
+            )
+
+            if not photometry_results:
+                logger.warning(f"No photometry results match configured bands {self.config.bands}")
+                self.state.stage = 'complete'
+                self.save_state()
+                return
 
         # Create combined plot with quality control filters
         plot_path = self.results_dir / 'combined_plot.png'
         create_combined_plot(
-            self.state.photometry_results,
+            photometry_results,  # Use filtered results
             plot_path,
             apply_quality_filters=True,
             sigma_threshold=self.config.sigma_threshold,
