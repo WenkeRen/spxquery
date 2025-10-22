@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Optional, List
 
-from ..core.config import QueryConfig, PipelineState
+from ..core.config import QueryConfig, PipelineState, DownloadResult
 from ..core.query import query_spherex_observations, get_download_urls, print_query_summary
 from ..core.download import parallel_download, print_download_summary
 from ..processing.photometry import process_all_observations
@@ -172,6 +172,53 @@ class SPXQueryPipeline:
         """Print current pipeline status."""
         print(self.get_status_message())
 
+    def _update_file_sizes_from_download(self, download_results: List[DownloadResult]) -> None:
+        """
+        Update QueryResults with actual total file size from downloaded files.
+
+        After download completes, calculate actual total size and update query summary.
+        This is simpler than per-file mapping and provides the key information users need.
+
+        Parameters
+        ----------
+        download_results : List[DownloadResult]
+            Download results with actual file sizes
+        """
+        if not self.state.query_results or not download_results:
+            return
+
+        # Calculate total size from successful downloads
+        actual_total_mb = sum(
+            result.size_mb for result in download_results
+            if result.success and result.size_mb
+        )
+        actual_total_gb = actual_total_mb / 1024.0
+        old_total_gb = self.state.query_results.total_size_gb
+
+        # Update total size in state
+        self.state.query_results.total_size_gb = actual_total_gb
+
+        # Log the size comparison
+        successful_count = sum(1 for r in download_results if r.success)
+        logger.info(f"Downloaded {successful_count} files")
+        logger.info(f"Total data size: {old_total_gb:.2f} GB (estimated) → {actual_total_gb:.2f} GB (actual)")
+
+        # Save updated query summary with actual total size
+        query_info = {
+            'source': {
+                'ra': self.config.source.ra,
+                'dec': self.config.source.dec,
+                'name': self.config.source.name
+            },
+            'query_time': self.state.query_results.query_time.isoformat(),
+            'n_observations': len(self.state.query_results),
+            'time_span_days': self.state.query_results.time_span_days,
+            'total_size_gb': actual_total_gb,
+            'total_size_gb_estimated': False,  # Now using actual sizes
+            'band_counts': self.state.query_results.band_counts
+        }
+        save_json(query_info, self.results_dir / 'query_summary.json')
+
     def run_full_pipeline(self, skip_existing_downloads: bool = True) -> None:
         """
         Run the complete pipeline through all configured stages.
@@ -205,10 +252,11 @@ class SPXQueryPipeline:
         """Execute query stage."""
         logger.info("Running query stage")
 
-        # Query SPHEREx archive
+        # Query SPHEREx archive with cutout size for accurate file size estimation
         query_results = query_spherex_observations(
             self.config.source,
-            self.config.bands
+            self.config.bands,
+            cutout_size=self.config.cutout_size
         )
 
         # Print summary
@@ -225,6 +273,7 @@ class SPXQueryPipeline:
             'n_observations': len(query_results),
             'time_span_days': query_results.time_span_days,
             'total_size_gb': query_results.total_size_gb,
+            'total_size_gb_estimated': True,  # Mark as estimated
             'band_counts': query_results.band_counts
         }
         save_json(query_info, self.results_dir / 'query_summary.json')
@@ -285,6 +334,10 @@ class SPXQueryPipeline:
         self.state.downloaded_files = [
             r.local_path for r in download_results if r.success
         ]
+
+        # Update QueryResults with actual file sizes from download
+        self._update_file_sizes_from_download(download_results)
+
         self.state.stage = 'processing'
         self.mark_stage_complete('download')
         self.save_state()

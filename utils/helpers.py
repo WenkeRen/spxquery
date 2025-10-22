@@ -316,21 +316,27 @@ def format_cutout_url_params(
 
 def estimate_cutout_size_mb(
     cutout_size: str | None,
-    full_size_mb: float = 70.0
+    full_size_mb: float = 71.6,
+    min_size_mb: float = 5.0
 ) -> float:
     """
-    Estimate cutout file size based on pixel dimensions.
+    Estimate cutout file size based on dimensions.
 
-    Assumes full SPHEREx image is 2040x2040 pixels (~70 MB).
-    Estimates cutout size proportional to pixel area.
+    Assumes full SPHEREx image is 2040x2040 pixels (~71.6 MB).
+    Estimates cutout size proportional to pixel area, with minimum 5 MB
+    due to auxiliary data (PSF, WCS, etc.) that's always included.
+
+    SPHEREx pixel scale: ~6.2 arcsec/pixel
 
     Parameters
     ----------
     cutout_size : str or None
-        Size parameter (e.g., "200px", "500,600px")
-        If None or cannot parse, returns full_size_mb
+        Size parameter (e.g., "200px", "3arcmin", "0.1deg")
+        If None, returns full_size_mb
     full_size_mb : float
-        Size of full image in MB (default 70.0 for SPHEREx)
+        Size of full image in MB (default 71.6 for SPHEREx)
+    min_size_mb : float
+        Minimum cutout size in MB (default 5.0, due to auxiliary data)
 
     Returns
     -------
@@ -340,47 +346,88 @@ def estimate_cutout_size_mb(
     Examples
     --------
     >>> estimate_cutout_size_mb("200px")
-    0.68  # approximately (200*200)/(2040*2040) * 70
+    5.0  # minimum size due to auxiliary data
+
+    >>> estimate_cutout_size_mb("500px")
+    6.1  # (500*500)/(2040*2040) * 71.6 ≈ 4.3, but min 5.0
+
+    >>> estimate_cutout_size_mb("1000px")
+    17.2  # (1000*1000)/(2040*2040) * 71.6
+
+    >>> estimate_cutout_size_mb("3arcmin")
+    9.7  # 3 arcmin ≈ 29 pixels, but minimum 5 MB applies
 
     >>> estimate_cutout_size_mb(None)
-    70.0
+    71.6  # full image
     """
     if not cutout_size:
         return full_size_mb
 
     try:
-        # Parse pixel dimensions
-        # Only estimate for pixel units (angular units depend on pixel scale)
-        if 'px' not in cutout_size.lower() and 'pix' not in cutout_size.lower():
-            logger.debug(f"Cannot estimate size for angular units: {cutout_size}")
-            return full_size_mb
+        # Convert angular units to pixels
+        # SPHEREx pixel scale: ~6.2 arcsec/pixel
+        pixel_scale_arcsec = 6.2
 
-        # Remove units
-        size_str = cutout_size.lower()
-        for unit in ['pixels', 'pixel', 'pix', 'px']:
-            size_str = size_str.replace(unit, '')
+        size_str = cutout_size.lower().strip()
 
-        # Parse dimensions
-        dims = [float(x.strip()) for x in size_str.split(',')]
-
-        if len(dims) == 1:
-            # Square cutout
-            cutout_pixels = dims[0] * dims[0]
-        elif len(dims) == 2:
-            # Rectangular cutout
-            cutout_pixels = dims[0] * dims[1]
+        # Parse dimensions and units
+        if 'arcsec' in size_str:
+            # Remove unit and parse
+            value_str = size_str.replace('arcsec', '').strip()
+            values = [float(x.strip()) for x in value_str.split(',')]
+            # Convert arcsec to pixels
+            dims_pixels = [v / pixel_scale_arcsec for v in values]
+        elif 'arcmin' in size_str:
+            value_str = size_str.replace('arcmin', '').strip()
+            values = [float(x.strip()) for x in value_str.split(',')]
+            # Convert arcmin to pixels (1 arcmin = 60 arcsec)
+            dims_pixels = [v * 60.0 / pixel_scale_arcsec for v in values]
+        elif 'deg' in size_str:
+            value_str = size_str.replace('deg', '').strip()
+            values = [float(x.strip()) for x in value_str.split(',')]
+            # Convert degrees to pixels (1 deg = 3600 arcsec)
+            dims_pixels = [v * 3600.0 / pixel_scale_arcsec for v in values]
+        elif 'rad' in size_str:
+            import math
+            value_str = size_str.replace('rad', '').strip()
+            values = [float(x.strip()) for x in value_str.split(',')]
+            # Convert radians to pixels (1 rad = 206265 arcsec)
+            dims_pixels = [v * 206265.0 / pixel_scale_arcsec for v in values]
+        elif 'px' in size_str or 'pix' in size_str:
+            # Already in pixels
+            for unit in ['pixels', 'pixel', 'pix', 'px']:
+                size_str = size_str.replace(unit, '')
+            dims_pixels = [float(x.strip()) for x in size_str.split(',')]
         else:
+            # No units specified, assume degrees (IRSA default)
+            values = [float(x.strip()) for x in size_str.split(',')]
+            dims_pixels = [v * 3600.0 / pixel_scale_arcsec for v in values]
+
+        # Calculate cutout area
+        if len(dims_pixels) == 1:
+            # Square cutout
+            cutout_pixels = dims_pixels[0] * dims_pixels[0]
+        elif len(dims_pixels) == 2:
+            # Rectangular cutout
+            cutout_pixels = dims_pixels[0] * dims_pixels[1]
+        else:
+            logger.warning(f"Invalid dimensions in cutout_size: {cutout_size}")
             return full_size_mb
 
         # Calculate size ratio
-        full_pixels = 2040 * 2040  # SPHEREx image size
+        full_pixels = 2040 * 2040  # SPHEREx full image size
         size_ratio = cutout_pixels / full_pixels
 
+        # Estimate based on pixel ratio
         estimated_size = full_size_mb * size_ratio
 
-        logger.debug(f"Estimated cutout size: {estimated_size:.2f} MB for {cutout_size}")
+        # Apply minimum size constraint (auxiliary data: PSF, WCS, headers)
+        final_size = max(estimated_size, min_size_mb)
 
-        return estimated_size
+        logger.debug(f"Estimated cutout size: {final_size:.2f} MB for {cutout_size} "
+                    f"({cutout_pixels:.0f} pixels, ratio={size_ratio:.4f})")
+
+        return final_size
 
     except (ValueError, AttributeError) as e:
         logger.warning(f"Could not estimate cutout size for '{cutout_size}': {e}")

@@ -30,31 +30,32 @@ BAND_WAVELENGTHS = {
     'D6': (4.42, 5.00)
 }
 
-# Estimated file sizes per band (MB)
-BAND_FILE_SIZES = {
-    'D1': 70, 'D2': 70, 'D3': 70,
-    'D4': 70, 'D5': 70, 'D6': 70
-}
+# Full image file size (MB) for SPHEREx 2040x2040 FITS files
+FULL_IMAGE_SIZE_MB = 71.6
 
 
 def query_spherex_observations(
     source: Source,
-    bands: Optional[List[str]] = None
+    bands: Optional[List[str]] = None,
+    cutout_size: Optional[str] = None
 ) -> QueryResults:
     """
     Query SPHEREx observations for a given source position.
-    
+
     Parameters
     ----------
     source : Source
         Target source with RA/Dec coordinates
     bands : List[str], optional
         List of bands to query (e.g., ['D1', 'D2']). If None, query all bands.
-    
+    cutout_size : str, optional
+        Cutout size parameter (e.g., "200px", "3arcmin") used for file size estimation.
+        If None, estimates full image size (~71.6 MB).
+
     Returns
     -------
     QueryResults
-        Query results containing observation information
+        Query results containing observation information with estimated file sizes
     """
     logger.info(f"Querying SPHEREx observations for source at RA={source.ra}, Dec={source.dec}")
     
@@ -100,13 +101,10 @@ def query_spherex_observations(
         wavelength_min = row['em_min'] * 1e6  # m to μm
         wavelength_max = row['em_max'] * 1e6  # m to μm
         
-        # Get file size, use default if not available or 0
-        file_size_kb = row.get('access_estsize', 0)
-        if file_size_kb > 0:
-            file_size_mb = file_size_kb / 1024.0  # Convert KB to MB
-        else:
-            # Use default estimation based on band
-            file_size_mb = BAND_FILE_SIZES.get(band, 70)
+        # Estimate file size based on cutout parameters
+        # TAP service doesn't provide accurate sizes for cutouts, so we estimate
+        from ..utils.helpers import estimate_cutout_size_mb
+        file_size_mb = estimate_cutout_size_mb(cutout_size, full_size_mb=FULL_IMAGE_SIZE_MB)
         
         obs = ObservationInfo(
             obs_id=row['obs_id'],
