@@ -207,6 +207,12 @@ logs/
 # PyCharm
 .idea/
 
+# AI tools
+.claude/
+.qwen/
+.continue/
+CLAUDE.md
+
 # Sublime Text
 *.sublime-project
 *.sublime-workspace
