@@ -178,36 +178,19 @@ def create_spectrum_plot(
     if apply_clipping:
         photometry_results = apply_sigma_clipping(photometry_results, sigma=sigma)
 
-    # Classify points if quality filtering is enabled
+    # Classify points by quality
     if apply_quality_filters and bad_flags_mask is not None:
-        from ..utils.helpers import check_flag_bits
-
-        # Separate into good and rejected
-        good_regular = []
-        rejected_regular = []
-        good_upper_limits = []
-        rejected_upper_limits = []
-
-        for p in photometry_results:
-            # Calculate SNR
-            snr = p.flux / p.flux_error if p.flux_error > 0 else 0.0
-
-            # Check filters
-            fails_snr = snr < sigma_threshold
-            fails_flag = check_flag_bits(p.flag, bad_flags_mask)
-            is_rejected = fails_snr or fails_flag
-
-            # Classify
-            if p.is_upper_limit:
-                if is_rejected:
-                    rejected_upper_limits.append(p)
-                else:
-                    good_upper_limits.append(p)
-            else:
-                if is_rejected:
-                    rejected_regular.append(p)
-                else:
-                    good_regular.append(p)
+        from ..utils.helpers import classify_photometry_by_quality
+        classified = classify_photometry_by_quality(
+            photometry_results,
+            sigma_threshold=sigma_threshold,
+            bad_flags_mask=bad_flags_mask,
+            separate_upper_limits=True
+        )
+        good_regular = classified.good_regular
+        rejected_regular = classified.rejected_regular
+        good_upper_limits = classified.good_upper_limits
+        rejected_upper_limits = classified.rejected_upper_limits
     else:
         # No quality filtering - all points are "good"
         good_regular = [p for p in photometry_results if not p.is_upper_limit]
@@ -460,27 +443,18 @@ def create_lightcurve_plot(
     if apply_clipping:
         photometry_results = apply_sigma_clipping(photometry_results, sigma=sigma)
 
-    # Classify points if quality filtering is enabled
+    # Classify points by quality
     if apply_quality_filters and bad_flags_mask is not None:
-        from ..utils.helpers import check_flag_bits
-
-        # Separate into good and rejected
-        good_points = []
-        rejected_points = []
-
-        for p in photometry_results:
-            # Calculate SNR
-            snr = p.flux / p.flux_error if p.flux_error > 0 else 0.0
-
-            # Check filters
-            fails_snr = snr < sigma_threshold
-            fails_flag = check_flag_bits(p.flag, bad_flags_mask)
-            is_rejected = fails_snr or fails_flag
-
-            if is_rejected:
-                rejected_points.append(p)
-            else:
-                good_points.append(p)
+        from ..utils.helpers import classify_photometry_by_quality
+        classified = classify_photometry_by_quality(
+            photometry_results,
+            sigma_threshold=sigma_threshold,
+            bad_flags_mask=bad_flags_mask,
+            separate_upper_limits=False  # Light curve doesn't separate upper limits
+        )
+        # Combine all good points (regular + upper limits if any)
+        good_points = classified.good_regular
+        rejected_points = classified.rejected_regular
     else:
         # No quality filtering - all points are "good"
         good_points = photometry_results

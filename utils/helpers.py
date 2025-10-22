@@ -4,8 +4,9 @@ Helper utility functions for SPXQuery package.
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -537,3 +538,101 @@ def apply_quality_filters(
     )
 
     return filtered, filter_stats
+
+
+@dataclass
+class ClassifiedPhotometry:
+    """Quality-classified photometry points."""
+    good_regular: List
+    rejected_regular: List
+    good_upper_limits: List
+    rejected_upper_limits: List
+
+
+def classify_photometry_by_quality(
+    photometry_results: List,
+    sigma_threshold: float,
+    bad_flags_mask: Optional[int] = None,
+    separate_upper_limits: bool = True
+) -> ClassifiedPhotometry:
+    """
+    Classify photometry points as good/rejected based on SNR and flag filters.
+
+    This function separates photometry measurements into four categories:
+    - Good regular measurements (SNR >= threshold, no bad flags, not upper limit)
+    - Rejected regular measurements (SNR < threshold or has bad flags, not upper limit)
+    - Good upper limits (SNR >= threshold, no bad flags, is upper limit)
+    - Rejected upper limits (SNR < threshold or has bad flags, is upper limit)
+
+    Parameters
+    ----------
+    photometry_results : List[PhotometryResult]
+        Photometry measurements to classify
+    sigma_threshold : float
+        Minimum SNR (flux/flux_err) threshold
+    bad_flags_mask : int, optional
+        Integer mask with bad flag bits set (from create_flag_mask)
+        If None, no flag filtering is applied
+    separate_upper_limits : bool
+        If True, separate upper limits from regular measurements
+
+    Returns
+    -------
+    ClassifiedPhotometry
+        Classified photometry points in four categories
+
+    Examples
+    --------
+    >>> from spxquery.core.config import PhotometryResult
+    >>> from spxquery.utils.helpers import create_flag_mask, classify_photometry_by_quality
+    >>>
+    >>> # Create sample data
+    >>> results = [...]  # List of PhotometryResult objects
+    >>>
+    >>> # Create flag mask for bad flags
+    >>> bad_flags_mask = create_flag_mask([0, 1, 2, 6, 7, 9, 10, 11, 15])
+    >>>
+    >>> # Classify photometry
+    >>> classified = classify_photometry_by_quality(
+    ...     results,
+    ...     sigma_threshold=5.0,
+    ...     bad_flags_mask=bad_flags_mask,
+    ...     separate_upper_limits=True
+    ... )
+    >>>
+    >>> print(f"Good regular: {len(classified.good_regular)}")
+    >>> print(f"Rejected regular: {len(classified.rejected_regular)}")
+    """
+    # Initialize classification lists
+    good_regular = []
+    rejected_regular = []
+    good_upper_limits = []
+    rejected_upper_limits = []
+
+    for p in photometry_results:
+        # Calculate SNR
+        snr = p.flux / p.flux_error if p.flux_error > 0 else 0.0
+
+        # Check filters
+        fails_snr = snr < sigma_threshold
+        fails_flag = check_flag_bits(p.flag, bad_flags_mask) if bad_flags_mask is not None else False
+        is_rejected = fails_snr or fails_flag
+
+        # Classify based on quality and upper limit status
+        if separate_upper_limits and p.is_upper_limit:
+            if is_rejected:
+                rejected_upper_limits.append(p)
+            else:
+                good_upper_limits.append(p)
+        else:
+            if is_rejected:
+                rejected_regular.append(p)
+            else:
+                good_regular.append(p)
+
+    return ClassifiedPhotometry(
+        good_regular=good_regular,
+        rejected_regular=rejected_regular,
+        good_upper_limits=good_upper_limits,
+        rejected_upper_limits=rejected_upper_limits
+    )
