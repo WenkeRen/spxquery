@@ -1,5 +1,5 @@
 """
-Main pipeline orchestrator for SPXQuery package.
+Main pipeline orchestrator for SPXQuery package with flexible, resumable execution.
 """
 
 import logging
@@ -23,43 +23,73 @@ logger = logging.getLogger(__name__)
 class SPXQueryPipeline:
     """
     Main pipeline for SPHEREx data query, download, and analysis.
-    
-    Supports both full automatic execution and step-by-step mode.
+
+    Supports:
+    - Flexible stage configuration (add/remove pipeline stages)
+    - Full automatic execution or step-by-step mode
+    - Resumable execution with state persistence
+    - Dependency checking for manual execution
     """
-    
-    def __init__(self, config: QueryConfig):
+
+    # Define stage dependencies
+    STAGE_DEPENDENCIES = {
+        'query': [],
+        'download': ['query'],
+        'processing': ['query', 'download'],
+        'visualization': ['query', 'download', 'processing']
+    }
+
+    def __init__(self, config: QueryConfig, pipeline_stages: Optional[List[str]] = None):
         """
         Initialize pipeline with configuration.
-        
+
         Parameters
         ----------
         config : QueryConfig
             Pipeline configuration
+        pipeline_stages : List[str], optional
+            List of stages to execute. Default: ['query', 'download', 'processing', 'visualization']
+            Allows customization of pipeline flow (e.g., skip visualization, add custom stages)
         """
         self.config = config
-        self.state = PipelineState(stage='query', config=config)
-        
+
+        # Set pipeline stages (default or custom)
+        if pipeline_stages is None:
+            pipeline_stages = ['query', 'download', 'processing', 'visualization']
+
+        # Initialize state
+        self.state = PipelineState(
+            stage='query',
+            config=config,
+            pipeline_stages=pipeline_stages,
+            completed_stages=[]
+        )
+
         # Set up directories
         self.data_dir = config.output_dir / 'data'
         self.results_dir = config.output_dir / 'results'
-        self.state_file = config.output_dir / 'pipeline_state.json'
-        
+        # State file named after source for easy identification
+        source_name = config.source.name or f"source_{config.source.ra:.4f}_{config.source.dec:.4f}"
+        self.state_file = config.output_dir / f"{source_name}.json"
+
         # Create directories
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
-        
+
         logger.info(f"Initialized pipeline for source at RA={config.source.ra}, Dec={config.source.dec}")
-    
+        logger.info(f"Pipeline stages: {self.state.pipeline_stages}")
+        logger.info(f"State file: {self.state_file.name}")
+
     def save_state(self) -> None:
         """Save current pipeline state to disk."""
         state_dict = self.state.to_dict()
         save_json(state_dict, self.state_file)
-        logger.info(f"Saved pipeline state: stage={self.state.stage}")
-    
+        logger.info(f"Saved pipeline state: stage={self.state.stage}, completed={self.state.completed_stages}")
+
     def load_state(self) -> bool:
         """
         Load pipeline state from disk.
-        
+
         Returns
         -------
         bool
@@ -67,40 +97,123 @@ class SPXQueryPipeline:
         """
         if not self.state_file.exists():
             return False
-        
+
         try:
             state_dict = load_json(self.state_file)
             self.state = PipelineState.from_dict(state_dict)
-            logger.info(f"Loaded pipeline state: stage={self.state.stage}")
+            logger.info(f"Loaded pipeline state: stage={self.state.stage}, completed={self.state.completed_stages}")
             return True
         except Exception as e:
             logger.error(f"Failed to load state: {e}")
             return False
-    
-    def run_full_pipeline(self) -> None:
-        """Run the complete pipeline from query to visualization."""
+
+    def check_dependencies(self, stage: str) -> None:
+        """
+        Check if all dependencies for a stage are satisfied.
+
+        Parameters
+        ----------
+        stage : str
+            Stage name to check
+
+        Raises
+        ------
+        RuntimeError
+            If dependencies are not satisfied
+        """
+        if stage not in self.STAGE_DEPENDENCIES:
+            logger.warning(f"Unknown stage '{stage}', cannot check dependencies")
+            return
+
+        required_stages = self.STAGE_DEPENDENCIES[stage]
+        missing_stages = [s for s in required_stages if s not in self.state.completed_stages]
+
+        if missing_stages:
+            raise RuntimeError(
+                f"Cannot run stage '{stage}': missing dependencies {missing_stages}. "
+                f"Completed stages: {self.state.completed_stages}. "
+                f"Please run the following stages first: {missing_stages}"
+            )
+
+    def mark_stage_complete(self, stage: str) -> None:
+        """
+        Mark a stage as completed.
+
+        Parameters
+        ----------
+        stage : str
+            Stage name
+        """
+        if stage not in self.state.completed_stages:
+            self.state.completed_stages.append(stage)
+            logger.info(f"Marked stage '{stage}' as complete")
+
+    def get_status_message(self) -> str:
+        """
+        Get a human-readable status message.
+
+        Returns
+        -------
+        str
+            Status message describing completed and pending stages
+        """
+        all_stages = self.state.pipeline_stages
+        completed = self.state.completed_stages
+        pending = [s for s in all_stages if s not in completed]
+
+        msg = "\nPipeline Status:\n"
+        msg += f"  Completed stages: {completed if completed else 'None'}\n"
+        msg += f"  Pending stages: {pending if pending else 'None'}\n"
+        msg += f"  Current stage: {self.state.stage}\n"
+
+        return msg
+
+    def print_status(self) -> None:
+        """Print current pipeline status."""
+        print(self.get_status_message())
+
+    def run_full_pipeline(self, skip_existing_downloads: bool = True) -> None:
+        """
+        Run the complete pipeline through all configured stages.
+
+        Parameters
+        ----------
+        skip_existing_downloads : bool
+            If True, skip already downloaded files. If False, re-download everything.
+        """
         logger.info("Starting full pipeline execution")
-        
-        self.run_query()
-        self.run_download()
-        self.run_processing()
-        self.run_visualization()
-        
+        logger.info(f"Pipeline stages: {self.state.pipeline_stages}")
+
+        # Execute each stage in order
+        for stage in self.state.pipeline_stages:
+            if stage == 'query':
+                self.run_query()
+            elif stage == 'download':
+                self.run_download(skip_existing=skip_existing_downloads)
+            elif stage == 'processing':
+                self.run_processing()
+            elif stage == 'visualization':
+                self.run_visualization()
+            else:
+                logger.warning(f"Unknown stage '{stage}', skipping")
+
+        self.state.stage = 'complete'
+        self.save_state()
         logger.info("Pipeline execution complete")
-    
+
     def run_query(self) -> None:
         """Execute query stage."""
         logger.info("Running query stage")
-        
+
         # Query SPHEREx archive
         query_results = query_spherex_observations(
             self.config.source,
             self.config.bands
         )
-        
+
         # Print summary
         print_query_summary(query_results)
-        
+
         # Save query results
         query_info = {
             'source': {
@@ -115,19 +228,30 @@ class SPXQueryPipeline:
             'band_counts': query_results.band_counts
         }
         save_json(query_info, self.results_dir / 'query_summary.json')
-        
+
         # Update state
         self.state.query_results = query_results
         self.state.stage = 'download'
+        self.mark_stage_complete('query')
         self.save_state()
-    
-    def run_download(self) -> None:
-        """Execute download stage."""
+
+    def run_download(self, skip_existing: bool = True) -> None:
+        """
+        Execute download stage.
+
+        Parameters
+        ----------
+        skip_existing : bool
+            If True, skip files that already exist. If False, re-download all files.
+        """
+        # Check dependencies
+        self.check_dependencies('download')
+
         if not self.state.query_results:
             raise RuntimeError("No query results available. Run query stage first.")
-        
-        logger.info("Running download stage")
-        
+
+        logger.info(f"Running download stage (skip_existing={skip_existing})")
+
         # Get download URLs with caching
         url_cache_file = self.results_dir / 'download_urls.json'
         download_info = get_download_urls(
@@ -138,47 +262,54 @@ class SPXQueryPipeline:
             cutout_size=self.config.cutout_size,
             cutout_center=self.config.cutout_center
         )
-        
+
         if not download_info:
             logger.warning("No download URLs found")
             self.state.stage = 'processing'
+            self.mark_stage_complete('download')
             self.save_state()
             return
-        
+
         # Download files
         download_results = parallel_download(
             download_info,
             self.data_dir,
-            max_workers=self.config.max_download_workers
+            max_workers=self.config.max_download_workers,
+            skip_existing=skip_existing
         )
-        
+
         # Print summary
         print_download_summary(download_results)
-        
+
         # Update state with downloaded files
         self.state.downloaded_files = [
             r.local_path for r in download_results if r.success
         ]
         self.state.stage = 'processing'
+        self.mark_stage_complete('download')
         self.save_state()
-    
+
     def run_processing(self) -> None:
         """Execute processing stage."""
+        # Check dependencies
+        self.check_dependencies('processing')
+
         logger.info("Running processing stage")
-        
+
         # Get list of downloaded files
         if not self.state.downloaded_files:
             # Try to find files in data directory
             self.state.downloaded_files = get_file_list(self.data_dir, "*.fits")
-        
+
         if not self.state.downloaded_files:
             logger.warning("No FITS files found for processing")
             self.state.stage = 'visualization'
+            self.mark_stage_complete('processing')
             self.save_state()
             return
-        
+
         logger.info(f"Processing {len(self.state.downloaded_files)} FITS files")
-        
+
         # Process all files
         # Convert diameter to radius for photometry function
         photometry_results = process_all_observations(
@@ -188,31 +319,36 @@ class SPXQueryPipeline:
             subtract_zodi=True,
             max_workers=self.config.max_processing_workers
         )
-        
+
         if not photometry_results:
             logger.warning("No photometry results obtained")
             self.state.stage = 'complete'
+            self.mark_stage_complete('processing')
             self.save_state()
             return
-        
+
         # Generate light curve
         df = generate_lightcurve_dataframe(photometry_results, self.config.source)
-        
+
         # Save light curve CSV
         csv_path = self.results_dir / 'lightcurve.csv'
         save_lightcurve_csv(df, csv_path)
-        
+
         # Print summary
         print_lightcurve_summary(df)
-        
+
         # Update state
         self.state.photometry_results = photometry_results
         self.state.csv_path = csv_path
         self.state.stage = 'visualization'
+        self.mark_stage_complete('processing')
         self.save_state()
-    
+
     def run_visualization(self) -> None:
         """Execute visualization stage."""
+        # Check dependencies
+        self.check_dependencies('visualization')
+
         # Check if photometry results are available in memory
         if not self.state.photometry_results:
             # Try to load from saved lightcurve CSV
@@ -225,6 +361,7 @@ class SPXQueryPipeline:
         if not self.state.photometry_results:
             logger.warning("No photometry results available for visualization")
             self.state.stage = 'complete'
+            self.mark_stage_complete('visualization')
             self.save_state()
             return
 
@@ -247,6 +384,7 @@ class SPXQueryPipeline:
             if not photometry_results:
                 logger.warning(f"No photometry results match configured bands {self.config.bands}")
                 self.state.stage = 'complete'
+                self.mark_stage_complete('visualization')
                 self.save_state()
                 return
 
@@ -265,33 +403,56 @@ class SPXQueryPipeline:
         # Update state
         self.state.plot_path = plot_path
         self.state.stage = 'complete'
+        self.mark_stage_complete('visualization')
         self.save_state()
 
         logger.info(f"Visualization saved to {plot_path}")
-    
-    def resume(self) -> None:
-        """Resume pipeline from saved state."""
+
+    def resume(self, skip_existing_downloads: bool = True) -> None:
+        """
+        Resume pipeline from saved state.
+
+        Parameters
+        ----------
+        skip_existing_downloads : bool
+            If True, skip files that already exist during download. If False, re-download.
+        """
         if not self.load_state():
             logger.warning("No saved state found. Starting from beginning.")
-            self.run_full_pipeline()
+            self.run_full_pipeline(skip_existing_downloads=skip_existing_downloads)
             return
-        
-        logger.info(f"Resuming from stage: {self.state.stage}")
-        
-        # Resume from appropriate stage
-        stage_map = {
-            'query': self.run_full_pipeline,
-            'download': lambda: (self.run_download(), self.run_processing(), self.run_visualization()),
-            'processing': lambda: (self.run_processing(), self.run_visualization()),
-            'visualization': self.run_visualization,
-            'complete': lambda: logger.info("Pipeline already complete")
-        }
-        
-        stage_func = stage_map.get(self.state.stage)
-        if stage_func:
-            stage_func()
-        else:
-            logger.error(f"Unknown stage: {self.state.stage}")
+
+        logger.info("Resuming from saved state")
+        self.print_status()
+
+        # Get remaining stages
+        remaining_stages = [
+            s for s in self.state.pipeline_stages
+            if s not in self.state.completed_stages
+        ]
+
+        if not remaining_stages:
+            logger.info("All stages already complete")
+            return
+
+        logger.info(f"Running remaining stages: {remaining_stages}")
+
+        # Execute remaining stages
+        for stage in remaining_stages:
+            if stage == 'query':
+                self.run_query()
+            elif stage == 'download':
+                self.run_download(skip_existing=skip_existing_downloads)
+            elif stage == 'processing':
+                self.run_processing()
+            elif stage == 'visualization':
+                self.run_visualization()
+            else:
+                logger.warning(f"Unknown stage '{stage}', skipping")
+
+        self.state.stage = 'complete'
+        self.save_state()
+        logger.info("Resume complete")
 
 
 def run_pipeline(
@@ -311,9 +472,11 @@ def run_pipeline(
     bad_flags: Optional[List[int]] = None,
     use_magnitude: bool = False,
     show_errorbars: bool = True,
+    skip_existing_downloads: bool = True,
+    pipeline_stages: Optional[List[str]] = None
 ) -> None:
     """
-    Convenience function to run the pipeline.
+    Convenience function to run the pipeline with sensible defaults.
 
     Parameters
     ----------
@@ -349,13 +512,17 @@ def run_pipeline(
         If True, plot AB magnitude instead of flux (default: False)
     show_errorbars : bool
         If True, show errorbars on plots (default: True)
+    skip_existing_downloads : bool
+        If True, skip already downloaded files. If False, re-download all (default: True)
+    pipeline_stages : List[str], optional
+        List of stages to execute (default: ['query', 'download', 'processing', 'visualization'])
     """
     # Set up logging
     setup_logging(log_level)
-    
+
     # Create configuration
     from ..core.config import Source
-    
+
     source = Source(ra=ra, dec=dec, name=source_name)
     config = QueryConfig(
         source=source,
@@ -371,11 +538,11 @@ def run_pipeline(
         use_magnitude=use_magnitude,
         show_errorbars=show_errorbars
     )
-    
+
     # Create and run pipeline
-    pipeline = SPXQueryPipeline(config)
-    
+    pipeline = SPXQueryPipeline(config, pipeline_stages=pipeline_stages)
+
     if resume:
-        pipeline.resume()
+        pipeline.resume(skip_existing_downloads=skip_existing_downloads)
     else:
-        pipeline.run_full_pipeline()
+        pipeline.run_full_pipeline(skip_existing_downloads=skip_existing_downloads)

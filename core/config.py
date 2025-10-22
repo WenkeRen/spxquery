@@ -24,7 +24,12 @@ class Source:
 
 @dataclass
 class QueryConfig:
-    """Configuration for SPHEREx data query and processing."""
+    """
+    Configuration for SPHEREx data query and processing.
+
+    Smart loading: If a saved state file exists for the source, parameters are loaded
+    with priority: user-provided > saved state > defaults.
+    """
     source: Source
     output_dir: Path = field(default_factory=Path.cwd)
     bands: Optional[List[str]] = None  # e.g., ['D1', 'D2', 'D3', 'D4', 'D5', 'D6']
@@ -37,6 +42,7 @@ class QueryConfig:
     bad_flags: List[int] = field(default_factory=lambda: [0, 1, 2, 6, 7, 9, 10, 11, 15])  # Flags to reject
     use_magnitude: bool = False  # If True, plot AB magnitude instead of flux (default: False)
     show_errorbars: bool = True  # If True, show errorbars on plots (default: True)
+    _auto_loaded: bool = field(default=False, init=False, repr=False)  # Internal flag
     
     def __post_init__(self):
         # Convert to Path if string
@@ -70,6 +76,104 @@ class QueryConfig:
         # Validate quality control parameters
         if self.sigma_threshold <= 0:
             raise ValueError(f"Sigma threshold must be positive, got {self.sigma_threshold}")
+
+    @classmethod
+    def from_saved_state(cls, source_name: str, output_dir: Path, **user_overrides) -> 'QueryConfig':
+        """
+        Create QueryConfig by loading from saved state with optional overrides.
+
+        Parameters are loaded with priority: user_overrides > saved state > defaults.
+
+        Parameters
+        ----------
+        source_name : str
+            Name of the source (used to find {source_name}.json)
+        output_dir : Path
+            Output directory where state file is located
+        **user_overrides
+            Any parameters to override from saved state
+
+        Returns
+        -------
+        QueryConfig
+            Configuration loaded from state with overrides applied
+
+        Examples
+        --------
+        >>> # Load everything from saved state
+        >>> config = QueryConfig.from_saved_state("cloverleaf", Path("output"))
+        >>>
+        >>> # Load from state but override aperture_diameter
+        >>> config = QueryConfig.from_saved_state(
+        ...     "cloverleaf", Path("output"),
+        ...     aperture_diameter=5.0
+        ... )
+        """
+        from ..utils.helpers import load_json
+
+        output_dir = Path(output_dir)
+        state_file = output_dir / f"{source_name}.json"
+
+        if not state_file.exists():
+            # No saved state - create from scratch with user overrides
+            source = Source(
+                ra=user_overrides.get('ra', 0.0),
+                dec=user_overrides.get('dec', 0.0),
+                name=source_name
+            )
+            # Remove ra/dec from overrides since they're in source
+            user_overrides.pop('ra', None)
+            user_overrides.pop('dec', None)
+
+            return cls(source=source, output_dir=output_dir, **user_overrides)
+
+        # Load saved state
+        saved_data = load_json(state_file)
+        saved_config = saved_data.get('config', {})
+
+        # Create source from saved or user data
+        if 'source' in saved_config:
+            source = Source(
+                ra=user_overrides.get('ra', saved_config['source']['ra']),
+                dec=user_overrides.get('dec', saved_config['source']['dec']),
+                name=source_name
+            )
+        else:
+            source = Source(
+                ra=user_overrides.get('ra', 0.0),
+                dec=user_overrides.get('dec', 0.0),
+                name=source_name
+            )
+
+        # Remove ra/dec from overrides
+        user_overrides.pop('ra', None)
+        user_overrides.pop('dec', None)
+
+        # Build kwargs with priority: user > saved > defaults
+        kwargs = {
+            'source': source,
+            'output_dir': output_dir,
+        }
+
+        # For each parameter, use: user_overrides > saved_config > class default
+        param_names = [
+            'bands', 'aperture_diameter', 'max_download_workers', 'max_processing_workers',
+            'cutout_size', 'cutout_center', 'sigma_threshold', 'bad_flags',
+            'use_magnitude', 'show_errorbars'
+        ]
+
+        for param in param_names:
+            if param in user_overrides:
+                # User explicitly provided this parameter
+                kwargs[param] = user_overrides[param]
+            elif param in saved_config:
+                # Load from saved state
+                kwargs[param] = saved_config[param]
+            # Otherwise, use class default (don't set in kwargs)
+
+        config = cls(**kwargs)
+        config._auto_loaded = True  # Mark as auto-loaded
+        return config
 
 
 @dataclass
@@ -160,18 +264,22 @@ class DownloadResult:
 @dataclass
 class PipelineState:
     """State for resumable pipeline execution."""
-    stage: str  # 'query', 'download', 'processing', 'visualization', 'complete'
+    stage: str  # Current stage: 'query', 'download', 'processing', 'visualization', 'complete'
     config: QueryConfig
     query_results: Optional[QueryResults] = None
     downloaded_files: List[Path] = field(default_factory=list)
     photometry_results: List[PhotometryResult] = field(default_factory=list)
     csv_path: Optional[Path] = None
     plot_path: Optional[Path] = None
+    completed_stages: List[str] = field(default_factory=list)  # Track completed stages
+    pipeline_stages: List[str] = field(default_factory=lambda: ['query', 'download', 'processing', 'visualization'])  # Configurable stages
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             'stage': self.stage,
+            'completed_stages': self.completed_stages,
+            'pipeline_stages': self.pipeline_stages,
             'config': {
                 'source': {
                     'ra': self.config.source.ra,
@@ -283,5 +391,7 @@ class PipelineState:
             downloaded_files=[Path(p) for p in data.get('downloaded_files', [])],
             photometry_results=photometry_results,
             csv_path=Path(data['csv_path']) if data.get('csv_path') else None,
-            plot_path=Path(data['plot_path']) if data.get('plot_path') else None
+            plot_path=Path(data['plot_path']) if data.get('plot_path') else None,
+            completed_stages=data.get('completed_stages', []),
+            pipeline_stages=data.get('pipeline_stages', ['query', 'download', 'processing', 'visualization'])
         )

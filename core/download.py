@@ -115,11 +115,12 @@ def parallel_download(
     download_info: List[Tuple[ObservationInfo, str]],
     output_dir: Path,
     max_workers: int = 4,
-    show_progress: bool = True
+    show_progress: bool = True,
+    skip_existing: bool = True
 ) -> List[DownloadResult]:
     """
     Download multiple files in parallel with progress tracking.
-    
+
     Parameters
     ----------
     download_info : List[Tuple[ObservationInfo, str]]
@@ -130,7 +131,9 @@ def parallel_download(
         Maximum number of parallel downloads
     show_progress : bool
         Whether to show progress bar
-    
+    skip_existing : bool
+        If True, skip files that already exist. If False, re-download all files.
+
     Returns
     -------
     List[DownloadResult]
@@ -159,9 +162,9 @@ def parallel_download(
             # Generate output filename
             filename = f"{obs.obs_id}.fits"
             output_path = output_dir / obs.band / filename
-            
-            # Skip if already downloaded
-            if output_path.exists():
+
+            # Skip if already downloaded (and skip_existing is True)
+            if skip_existing and output_path.exists():
                 logger.info(f"Skipping {filename} - already exists")
                 results.append(DownloadResult(
                     url=url,
