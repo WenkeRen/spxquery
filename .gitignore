@@ -169,6 +169,7 @@ dmypy.json
 # =============================================================================
 
 # Downloaded data cache
+demo_data/
 data/
 cache/
 downloads/
