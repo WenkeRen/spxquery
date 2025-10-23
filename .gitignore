@@ -169,7 +169,7 @@ dmypy.json
 # =============================================================================
 
 # Downloaded data cache
-demo_data/
+# demo_data/
 data/
 cache/
 downloads/
@@ -178,7 +178,7 @@ tmp/
 
 # Output directories
 output/
-results/
+# results/
 plots/
 figures/
 
