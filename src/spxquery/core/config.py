@@ -182,20 +182,17 @@ class ObservationInfo:
     obs_id: str
     band: str
     mjd: float
-    ra: float
-    dec: float
     wavelength_min: float  # microns
     wavelength_max: float  # microns
-    access_url: str
-    file_size_mb: float
+    download_url: str  # Base download URL (cutout params appended during download)
     t_min: float  # MJD
     t_max: float  # MJD
-    
+
     @property
     def wavelength_center(self) -> float:
         """Central wavelength in microns."""
         return (self.wavelength_min + self.wavelength_max) / 2
-    
+
     @property
     def bandwidth(self) -> float:
         """Bandwidth in microns."""
@@ -222,9 +219,9 @@ class QueryResults:
             observations=filtered_obs,
             query_time=self.query_time,
             source=self.source,
-            total_size_gb=sum(obs.file_size_mb for obs in filtered_obs) / 1024,
+            total_size_gb=0.0,  # File sizes unknown until download
             time_span_days=self.time_span_days,
-            band_counts={band: sum(1 for obs in filtered_obs if obs.band == band) 
+            band_counts={band: sum(1 for obs in filtered_obs if obs.band == band)
                         for band in bands}
         )
 
@@ -304,12 +301,9 @@ class PipelineState:
                         'obs_id': obs.obs_id,
                         'band': obs.band,
                         'mjd': obs.mjd,
-                        'ra': obs.ra,
-                        'dec': obs.dec,
                         'wavelength_min': obs.wavelength_min,
                         'wavelength_max': obs.wavelength_max,
-                        'access_url': obs.access_url,
-                        'file_size_mb': obs.file_size_mb,
+                        'download_url': obs.download_url,
                         't_min': obs.t_min,
                         't_max': obs.t_max
                     } for obs in self.query_results.observations

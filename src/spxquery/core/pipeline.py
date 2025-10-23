@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional, List
 
 from ..core.config import QueryConfig, PipelineState, DownloadResult
-from ..core.query import query_spherex_observations, get_download_urls, print_query_summary
+from ..core.query import query_spherex_observations, print_query_summary
 from ..core.download import parallel_download, print_download_summary
 from ..processing.photometry import process_all_observations
 from ..processing.lightcurve import (
@@ -15,7 +15,7 @@ from ..processing.lightcurve import (
     load_lightcurve_from_csv
 )
 from ..visualization.plots import create_combined_plot
-from ..utils.helpers import setup_logging, save_json, load_json, get_file_list
+from ..utils.helpers import setup_logging, save_json, load_json, get_file_list, format_cutout_url_params
 
 logger = logging.getLogger(__name__)
 
@@ -301,19 +301,26 @@ class SPXQueryPipeline:
 
         logger.info(f"Running download stage (skip_existing={skip_existing})")
 
-        # Get download URLs with caching
-        url_cache_file = self.results_dir / 'download_urls.json'
-        download_info = get_download_urls(
-            self.state.query_results,
-            max_workers=self.config.max_download_workers,
-            show_progress=True,
-            cache_file=url_cache_file,
-            cutout_size=self.config.cutout_size,
-            cutout_center=self.config.cutout_center
-        )
+        # Construct download URLs with cutout parameters appended on-the-fly
+        download_info = []
+        for obs in self.state.query_results.observations:
+            url = obs.download_url  # Base URL from query
+
+            # Append cutout parameters if specified
+            if self.config.cutout_size:
+                cutout_params = format_cutout_url_params(
+                    self.config.cutout_size,
+                    self.config.cutout_center,
+                    self.config.source.ra,
+                    self.config.source.dec
+                )
+                url = url + cutout_params
+                logger.debug(f"Added cutout to {obs.obs_id}: {cutout_params}")
+
+            download_info.append((obs, url))
 
         if not download_info:
-            logger.warning("No download URLs found")
+            logger.warning("No observations to download")
             self.state.stage = 'processing'
             self.mark_stage_complete('download')
             self.save_state()
