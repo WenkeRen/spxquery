@@ -29,7 +29,7 @@ BAND_WAVELENGTHS = {
 # Regex pattern to extract obs_id from obs_publisher_did
 # Format: "ivo://irsa.ipac/spherex_qr?2025W23_1C_0051_3/D4"
 # Extract: "2025W23_1C_0051_3"
-OBS_ID_PATTERN = re.compile(r'spherex_qr\?([^/]+)')
+OBS_ID_PATTERN = re.compile(r'\?([^/]+)')
 
 
 def query_spherex_observations(
