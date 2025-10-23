@@ -600,15 +600,32 @@ def process_all_observations(
     
     if use_multiprocessing:
         logger.info(f"Using multiprocessing with {max_workers} workers")
-        
-        # Use multiprocessing with progress bar
-        with Pool(processes=max_workers) as pool:
-            # Use imap for better progress tracking
-            with tqdm(total=len(args_list), desc="Processing observations", unit="files") as pbar:
-                for result in pool.imap(_process_single_file, args_list):
+
+        try:
+            # Use multiprocessing with progress bar
+            with Pool(processes=max_workers) as pool:
+                # Use imap for better progress tracking
+                with tqdm(total=len(args_list), desc="Processing observations", unit="files") as pbar:
+                    for result in pool.imap(_process_single_file, args_list):
+                        if result:
+                            results.append(result)
+                        pbar.update(1)
+        except RuntimeError as e:
+            if "freeze_support" in str(e) or "bootstrapping" in str(e):
+                logger.error(
+                    "Multiprocessing failed. On macOS/Windows, you must protect your script with:\n"
+                    "    if __name__ == '__main__':\n"
+                    "        run_pipeline(...)\n"
+                    "Falling back to sequential processing."
+                )
+                # Fall back to sequential processing
+                logger.info("Falling back to sequential processing")
+                for args in tqdm(args_list, desc="Processing observations", unit="files"):
+                    result = _process_single_file(args)
                     if result:
                         results.append(result)
-                    pbar.update(1)
+            else:
+                raise
     else:
         if max_workers == 1:
             logger.info("Using sequential processing (max_workers=1)")

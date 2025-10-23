@@ -22,15 +22,28 @@ logger = logging.getLogger(__name__)
 @contextmanager
 def suppress_astropy_info():
     """
-    Context manager to temporarily suppress astropy INFO messages.
+    Context manager to temporarily suppress astropy INFO messages and FITS warnings.
 
     This is needed because SPHEREx provides non-standard WCS headers that trigger
-    harmless but annoying INFO messages about SIP distortion coefficients.
+    harmless but annoying INFO messages about SIP distortion coefficients and
+    warnings about redundant SCAMP distortion parameters.
     """
     original_level = astropy_log.level
     astropy_log.setLevel("WARNING")
+
     try:
-        yield
+        # Suppress specific FITSFixedWarning about redundant SCAMP distortion parameters
+        with warnings.catch_warnings():
+            # Catch the warning by message pattern, regardless of category
+            warnings.filterwarnings(
+                'ignore',
+                message='.*Removed redundant SCAMP distortion parameters.*'
+            )
+            warnings.filterwarnings(
+                'ignore',
+                message='.*because SIP parameters are also present.*'
+            )
+            yield
     finally:
         astropy_log.setLevel(original_level)
 
@@ -105,13 +118,13 @@ def read_spherex_mef(filepath: Path) -> SPHERExMEF:
         zodi_data = hdulist["ZODI"].data.astype(np.float32)
         psf_data = hdulist["PSF"].data.astype(np.float32)
 
-        # Load spatial WCS (primary)
-        spatial_wcs = WCS(image_header)
-
-        # Load spectral WCS (alternative 'W')
-        # Need to pass HDUList for lookup table access
-        # Suppress astropy INFO messages about SIP distortion during spectral WCS creation
+        # Load WCS with suppressed warnings about SCAMP/SIP distortion parameters
         with suppress_astropy_info():
+            # Load spatial WCS (primary)
+            spatial_wcs = WCS(image_header)
+
+            # Load spectral WCS (alternative 'W')
+            # Need to pass HDUList for lookup table access
             spectral_wcs = WCS(header=image_header, fobj=hdulist, key="W")
             # Disable SIP distortion for spectral WCS
             spectral_wcs.sip = None

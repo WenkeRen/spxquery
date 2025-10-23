@@ -205,11 +205,12 @@ def _resolve_single_url(
 
 def get_download_urls(
     query_results: QueryResults,
-    max_workers: int = 8,
+    max_workers: int = 4,
     show_progress: bool = True,
     cache_file: Optional[Path] = None,
     cutout_size: Optional[str] = None,
-    cutout_center: Optional[str] = None
+    cutout_center: Optional[str] = None,
+    max_retries: int = 3
 ) -> List[Tuple[ObservationInfo, str]]:
     """
     Process datalink URLs to get actual FITS file download URLs in parallel.
@@ -219,7 +220,7 @@ def get_download_urls(
     query_results : QueryResults
         Query results containing observations with datalink URLs
     max_workers : int
-        Maximum number of parallel workers
+        Maximum number of parallel workers (default: 4, matches download workers)
     show_progress : bool
         Whether to show progress bar
     cache_file : Path, optional
@@ -228,6 +229,8 @@ def get_download_urls(
         Cutout size parameter (e.g., "200px", "3arcmin")
     cutout_center : str, optional
         Cutout center parameter (e.g., "70,20") or None to use source position
+    max_retries : int
+        Maximum number of retry attempts if cache is incomplete (default: 3)
 
     Returns
     -------
@@ -235,19 +238,57 @@ def get_download_urls(
         List of (observation, download_url) tuples
     """
     logger.info(f"Resolving download URLs for {len(query_results.observations)} observations")
-    
+
+    # Check retry counter to prevent infinite loops
+    retry_counter_file = cache_file.parent / '.url_retry_count' if cache_file else None
+    if retry_counter_file and retry_counter_file.exists():
+        try:
+            import json
+            with open(retry_counter_file, 'r') as f:
+                retry_data = json.load(f)
+                retry_count = retry_data.get('count', 0)
+                if retry_count >= max_retries:
+                    logger.warning(
+                        f"Maximum retry attempts ({max_retries}) reached for URL resolution. "
+                        f"Proceeding with available cached URLs even if incomplete."
+                    )
+                    # Load whatever we have in cache and return
+                    if cache_file and cache_file.exists():
+                        try:
+                            cached_urls = load_url_cache(cache_file)
+                            obs_by_composite_key = {
+                                f"{obs.obs_id}_{obs.band}": obs for obs in query_results.observations
+                            }
+                            matched_urls = [
+                                (obs_by_composite_key[key], url)
+                                for key, url in cached_urls.items()
+                                if key in obs_by_composite_key
+                            ]
+                            logger.info(f"Loaded {len(matched_urls)} URLs from cache (incomplete)")
+                            # Reset retry counter
+                            retry_counter_file.unlink()
+                            return matched_urls
+                        except Exception as e:
+                            logger.error(f"Failed to load cached URLs after max retries: {e}")
+                            retry_counter_file.unlink()
+                            return []
+        except Exception as e:
+            logger.warning(f"Failed to read retry counter: {e}")
+
     # Try to load from cache if available
     if cache_file and cache_file.exists():
         try:
             cached_urls = load_url_cache(cache_file)
-            # Match cached URLs with current observations
-            obs_by_id = {obs.obs_id: obs for obs in query_results.observations}
+            # Match cached URLs with current observations using composite key (obs_id, band)
+            obs_by_composite_key = {
+                f"{obs.obs_id}_{obs.band}": obs for obs in query_results.observations
+            }
             matched_urls = []
-            
-            for obs_id, url in cached_urls.items():
-                if obs_id in obs_by_id:
-                    matched_urls.append((obs_by_id[obs_id], url))
-            
+
+            for composite_key, url in cached_urls.items():
+                if composite_key in obs_by_composite_key:
+                    matched_urls.append((obs_by_composite_key[composite_key], url))
+
             if len(matched_urls) == len(query_results.observations):
                 logger.info(f"Loaded {len(matched_urls)} URLs from cache")
                 return matched_urls
@@ -304,16 +345,40 @@ def get_download_urls(
         try:
             save_url_cache(download_urls, cache_file)
             logger.info(f"Saved URLs to cache: {cache_file}")
+
+            # Update retry counter if cache is still incomplete
+            if len(download_urls) < len(query_results.observations):
+                if retry_counter_file:
+                    import json
+                    current_count = 0
+                    if retry_counter_file.exists():
+                        try:
+                            with open(retry_counter_file, 'r') as f:
+                                retry_data = json.load(f)
+                                current_count = retry_data.get('count', 0)
+                        except Exception:
+                            pass
+                    current_count += 1
+                    retry_counter_file.parent.mkdir(parents=True, exist_ok=True)
+                    with open(retry_counter_file, 'w') as f:
+                        json.dump({'count': current_count}, f)
+                    logger.info(f"URL resolution incomplete ({len(download_urls)}/{len(query_results.observations)}). Retry count: {current_count}/{max_retries}")
+            else:
+                # Cache is complete, reset retry counter
+                if retry_counter_file and retry_counter_file.exists():
+                    retry_counter_file.unlink()
+                    logger.info("URL resolution complete, reset retry counter")
+
         except Exception as e:
             logger.warning(f"Failed to save URL cache: {e}")
-    
+
     return download_urls
 
 
 def save_url_cache(download_urls: List[Tuple[ObservationInfo, str]], cache_file: Path) -> None:
     """
     Save download URLs to cache file.
-    
+
     Parameters
     ----------
     download_urls : List[Tuple[ObservationInfo, str]]
@@ -322,11 +387,12 @@ def save_url_cache(download_urls: List[Tuple[ObservationInfo, str]], cache_file:
         Cache file path
     """
     import json
-    
+
+    # Use composite key (obs_id, band) to handle multiple bands per obs_id
     cache_data = {
-        obs.obs_id: url for obs, url in download_urls
+        f"{obs.obs_id}_{obs.band}": url for obs, url in download_urls
     }
-    
+
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     with open(cache_file, 'w') as f:
         json.dump(cache_data, f, indent=2)
@@ -355,14 +421,14 @@ def load_url_cache(cache_file: Path) -> dict:
 def has_complete_url_cache(query_results: QueryResults, cache_file: Path) -> bool:
     """
     Check if cache contains URLs for all observations.
-    
+
     Parameters
     ----------
     query_results : QueryResults
         Query results to check against
     cache_file : Path
         Cache file path
-    
+
     Returns
     -------
     bool
@@ -370,12 +436,13 @@ def has_complete_url_cache(query_results: QueryResults, cache_file: Path) -> boo
     """
     if not cache_file.exists():
         return False
-    
+
     try:
         cached_urls = load_url_cache(cache_file)
-        obs_ids = {obs.obs_id for obs in query_results.observations}
-        cached_ids = set(cached_urls.keys())
-        return obs_ids.issubset(cached_ids)
+        # Use composite keys (obs_id, band) to check completeness
+        obs_composite_keys = {f"{obs.obs_id}_{obs.band}" for obs in query_results.observations}
+        cached_keys = set(cached_urls.keys())
+        return obs_composite_keys.issubset(cached_keys)
     except Exception:
         return False
 
