@@ -2,72 +2,91 @@
 
 SPXQuery is a Python package designed to automate SPHEREx spectral image data query, download, and time-domain analysis for astronomical sources.
 
+## Example Output
+
+![SPHEREx Light Curve](example/demo_data/cloverleaf/results/combined_plot.png)
+
+*Automated spectral and temporal analysis of the Cloverleaf quasar (z=2.56) showing SPHEREx's multi-wavelength time-domain capabilities.*
+
 ## Features
 
-- **Automated TAP queries** to IRSA SPHEREx archive
-- **Parallel URL resolution** with progress tracking and caching
-- **Parallel downloads** with progress tracking
-- **FITS MEF processing** with proper spectral WCS handling
-- **Aperture photometry** extraction with zodiacal background subtraction
-- **Time-domain analysis** with light curve generation
-- **Visualization** of spectra and light curves
-- **Resumable pipeline** with state persistence and URL caching
-- **Step-by-step execution** support
-- **Image cutout support** for reduced download sizes
-- **Quality control filtering** for photometry visualization
+- **Automated data pipeline**: Query → Download → Photometry → Visualization
+- **Image cutout support**: Download only regions of interest (99% storage reduction)
+- **Parallel processing**: Fast downloads and photometry extraction
+- **Resumable execution**: Automatic state persistence for interrupted runs
+- **Quality control**: Built-in filtering with visual inspection of rejected data
+- **Publication-ready plots**: Combined spectral and time-series visualization
 
 ## Installation
 
-Install dependencies and the package in development mode:
+### PyPI Installation (Coming Soon)
+
+SPXQuery will soon be available on PyPI:
 
 ```bash
-pip install -r requirements.txt
-pip install -e .
+pip install spxquery
 ```
 
+**Note**: This installation method is not yet available. Please use manual installation below.
+
+### Manual Installation
+
+```bash
+git clone https://github.com/WenkeRen/spxquery.git
+cd spxquery
+pip install .
+```
+
+Verify installation:
+
+```bash
+python -c "import spxquery; print(spxquery.__version__)"
+```
+
+For detailed installation instructions and troubleshooting, see [INSTALL.md](INSTALL.md).
+
 ## Quick Start
+
+### One-Line Pipeline
 
 ```python
 from spxquery.core.pipeline import run_pipeline
 
-# Run full pipeline for a source with image cutout
+# Run complete pipeline for Cloverleaf quasar (z=2.56)
 run_pipeline(
-    ra=304.693508808,
-    dec=42.4436872991,
-    output_dir="my_output",
-    source_name="My_Star",
-    cutout_size="200px"  # Optional: download cutouts instead of full images
+    ra=213.9427080,
+    dec=11.4953890,
+    output_dir="output",
+    source_name="cloverleaf",
+    aperture_diameter=2.0,
+    cutout_size="60px"
 )
 ```
 
 ## Basic Usage
 
-### Full Pipeline with Configuration
+### Configure and Run
 
 ```python
 from spxquery import Source, QueryConfig, SPXQueryPipeline
 
-source = Source(ra=304.69, dec=42.44, name="Variable_Star")
+# Configure your analysis for Cloverleaf quasar
+source = Source(ra=213.9427080, dec=11.4953890, name="cloverleaf")
 config = QueryConfig(
     source=source,
     output_dir="output",
-    bands=['D1', 'D2', 'D3'],  # Optional: specific bands only
-    aperture_diameter=3.0,     # Aperture size in pixels
-    cutout_size="200px",       # Optional: download cutouts
-    sigma_threshold=5.0,       # QC: minimum SNR (default: 5.0)
-    bad_flags=[0,1,2,6,7,9,10,11,15]  # QC: bad pixel flags (default)
+    aperture_diameter=2.0,
+    cutout_size="60px"
 )
 
+# Run the pipeline
 pipeline = SPXQueryPipeline(config)
 pipeline.run_full_pipeline()
 ```
 
 ### Step-by-Step Execution
 
-Execute individual pipeline stages for more control:
-
 ```python
-pipeline = SPXQueryPipeline(config)
 pipeline.run_query()          # Query IRSA archive
 pipeline.run_download()       # Download FITS files
 pipeline.run_processing()     # Extract photometry
@@ -77,75 +96,28 @@ pipeline.run_visualization()  # Create plots
 ### Resume After Interruption
 
 ```python
+# Automatically resume from saved state
 pipeline = SPXQueryPipeline(config)
-pipeline.resume()  # Resume from saved state
+pipeline.resume()
 ```
 
-## Image Cutouts
+For detailed examples including quality control settings, band selection, and advanced features, see [example/quickstart_demo.ipynb](example/quickstart_demo.ipynb).
 
-Cutouts significantly reduce download time and storage by downloading only the region of interest instead of full 2040×2040 images (~70 MB each).
+## Output Files
 
-**Cutout Parameters:**
-- `cutout_size`: Specify size with units (e.g., "200px", "100,200px", "3arcmin", "0.1deg")
-  - Single value: square cutout; two values: rectangular cutout
-  - Units: px/pix/pixels (pixels), arcsec/arcmin/deg/rad (angular), default: degrees
-- `cutout_center`: Optional center coordinates (defaults to source position)
-  - Format: "x,y[units]" (e.g., "304.5,42.3" for RA/Dec in degrees)
-
-**Storage Comparison:**
-- Full image: ~70 MB
-- 200px cutout: ~0.7 MB (99% reduction)
-- 500px cutout: ~4.3 MB (94% reduction)
-- 1000px cutout: ~17 MB (76% reduction)
-
-SPHEREx pixel scale: ~6.2 arcsec/pixel
-
-## Quality Control
-
-Quality control filters affect visualization only - ALL measurements are saved to CSV.
-
-**Parameters:**
-- `sigma_threshold`: Minimum SNR (flux/flux_err) - default: 5.0
-- `bad_flags`: Pixel flag bits to reject - default: [0,1,2,6,7,9,10,11,15]
-
-**Visualization:**
-- Good measurements: filled circles with error bars
-- Rejected measurements: small gray crosses (for visual inspection)
-- CSV output: contains ALL measurements regardless of QC status
-
-**Default bad flags reject:**
-- Saturation (bit 0)
-- Bad/hot pixels (bits 1, 2)
-- Cosmic rays (bit 6)
-- Non-linearity (bit 7)
-- Edge effects (bits 9, 10, 11)
-- Other quality issues (bit 15)
-
-## Output Structure
+The pipeline creates an organized output directory:
 
 ```
 output_dir/
-├── data/                    # Downloaded FITS files (organized by band)
-├── results/                 # Analysis results
+├── data/                    # Downloaded FITS files (by band)
+├── results/
+│   ├── lightcurve.csv       # Photometry time-series (all measurements)
+│   ├── combined_plot.png    # Spectral + temporal visualization
 │   ├── query_summary.json   # Query metadata
-│   ├── download_urls.json   # Cached download URLs
-│   ├── lightcurve.csv       # Photometry results
-│   └── combined_plot.png    # Visualization
-└── pipeline_state.json      # Resumable state
+└── {source_name}.json       # Pipeline state (for resume)
 ```
 
-## Light Curve CSV Columns
-
-- `obs_id`: Observation identifier
-- `mjd`: Modified Julian Date
-- `flux`: Flux in MJy/sr
-- `flux_error`: Flux uncertainty
-- `wavelength`: Central wavelength (μm)
-- `bandwidth`: Bandwidth (μm)
-- `band`: SPHEREx band (D1-D6)
-- `flag`: Combined flag bitmap
-- `pix_x`, `pix_y`: Pixel coordinates
-- `is_upper_limit`: True if error > flux
+The `lightcurve.csv` contains all photometry measurements with columns including MJD, flux, wavelength, band, quality flags, and SNR.
 
 ## SPHEREx Bands
 
@@ -158,44 +130,23 @@ output_dir/
 | D5   | 3.83-4.41 μm     | R=112          |
 | D6   | 4.42-5.00 μm     | R=128          |
 
-## Advanced Usage
+## Documentation
 
-### Custom Query with URL Caching
+- **[Installation Guide](INSTALL.md)**: Detailed installation instructions and troubleshooting
+- **[Quick Start Notebook](example/quickstart_demo.ipynb)**: Interactive tutorial with examples
+- **[API Reference](src/spxquery/)**: Source code with docstrings
 
-```python
-from spxquery.core.query import query_spherex_observations, get_download_urls
+## Key Features Explained
 
-results = query_spherex_observations(
-    source=Source(ra=304.69, dec=42.44),
-    bands=['D2', 'D3']
-)
+**Image Cutouts**: Download 200×200 pixel cutouts (~0.7 MB) instead of full 2040×2040 images (~70 MB) for 99% storage reduction. Specify `cutout_size="200px"` or use angular units like `"3arcmin"`.
 
-urls = get_download_urls(
-    results,
-    max_workers=8,
-    show_progress=True,
-    cache_file=Path("my_urls.json")
-)
-```
+**Quality Control**: All measurements are saved to CSV. Visualization applies configurable filters (`sigma_threshold`, `bad_flags`) to show good measurements (filled circles) and rejected data (gray crosses) for inspection.
 
-### Custom Photometry
+**Resume Capability**: Pipeline automatically saves state after each stage. Use `pipeline.resume()` to continue from interruptions without re-downloading data.
 
-```python
-from spxquery.processing.photometry import extract_source_photometry
+## Known Issues
 
-result = extract_source_photometry(
-    mef_file=Path("data/D2/obs_123.fits"),
-    source=Source(ra=304.69, dec=42.44),
-    aperture_radius=2.0  # Custom aperture
-)
-```
-
-## Troubleshooting
-
-- **TAP Query Timeout**: Increase timeout in query module
-- **Download Failures**: Check network connection, reduce max_workers
-- **Memory Issues**: Process files in batches or use cutouts
-- **Missing Dependencies**: Run `pip install -r requirements.txt`
+**Overly Conservative Source Masking**: The pipeline uses official SPHEREx image masks to avoid bad pixels during background subtraction. However, the official pipeline tends to provide overly large source masks. If your target is located in an extended nebula or near bright stars, the photometry extraction may fail because no clean pixels are available for background estimation. In such cases, consider using a different background estimation method or manually adjusting the mask parameters.
 
 ## License
 
