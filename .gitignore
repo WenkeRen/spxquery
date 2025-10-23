@@ -212,6 +212,8 @@ logs/
 .qwen/
 .continue/
 CLAUDE.md
+QWEN.md
+CONTINUE.md
 
 # Sublime Text
 *.sublime-project
@@ -289,3 +291,6 @@ htmlcov/
 # pip
 pip-log.txt
 pip-delete-this-directory.txt
+
+DevMaterial
+debug

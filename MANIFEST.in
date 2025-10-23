@@ -1,0 +1,20 @@
+# Include documentation and metadata files
+include README.md
+include LICENSE
+include requirements.txt
+include pyproject.toml
+
+# Include example notebooks but not temporary outputs
+recursive-include example *.ipynb *.md
+recursive-exclude example *.pyc __pycache__
+
+# Exclude development and temporary files
+global-exclude *.py[cod]
+global-exclude __pycache__
+global-exclude *.so
+global-exclude .DS_Store
+global-exclude *.egg-info
+prune .git
+prune .github
+exclude .gitignore
+
