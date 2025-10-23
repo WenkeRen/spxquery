@@ -1,0 +1,20 @@
+{
+  "source": {
+    "ra": 213.942708,
+    "dec": 11.495389,
+    "name": "cloverleaf"
+  },
+  "query_time": "2025-10-24T00:06:56.871376",
+  "n_observations": 108,
+  "time_span_days": 33.09301097250136,
+  "total_size_gb": 0.5136001110076904,
+  "total_size_gb_estimated": false,
+  "band_counts": {
+    "D1": 18,
+    "D2": 18,
+    "D3": 18,
+    "D4": 18,
+    "D5": 18,
+    "D6": 18
+  }
+}
