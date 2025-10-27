@@ -393,11 +393,11 @@ def extract_source_photometry(
 ) -> Optional[PhotometryResult]:
     """
     Extract photometry for a source from a SPHEREx MEF file with local background subtraction.
-    
+
     This function performs aperture photometry and properly converts surface brightness
-    (MJy/sr) to flux density (Jansky) for magnitude calculation using the WCS-derived
-    pixel scale at the source position.
-    
+    (MJy/sr) to flux density (microJansky) using the WCS-derived pixel scale at the
+    source position.
+
     Parameters
     ----------
     mef_file : Path
@@ -412,11 +412,11 @@ def extract_source_photometry(
         Inner radius for background annulus. If None, calculated automatically.
     outer_radius : float, optional
         Outer radius for background annulus. If None, calculated automatically.
-    
+
     Returns
     -------
     PhotometryResult or None
-        Photometry result with flux in MJy/sr and AB magnitude, or None if extraction failed
+        Photometry result with flux in microJansky (μJy) and AB magnitude, or None if extraction failed
     """
     try:
         # Read MEF
@@ -461,21 +461,24 @@ def extract_source_photometry(
         
         logger.debug(f"Local background: {bg_level:.6f} ± {bg_error:.6f} MJy/sr from {n_bg_pixels} pixels")
 
-        # Convert from MJy/sr to Jansky for magnitude calculation
+        # Convert from MJy/sr to microJansky (μJy) for output
         # The aperture photometry returns a sum: Σ(surface_brightness_i) across pixels
         # To convert to flux: multiply by solid angle PER PIXEL, not total aperture
         pixel_scale_arcsec = get_pixel_scale_at_position(mef.spatial_wcs, x, y)
         pixel_solid_angle_sr = (pixel_scale_arcsec / 206265.0) ** 2  # Convert arcsec to radians, then square
 
-        # Convert: (MJy/sr × pixels) × (sr/pixel) = MJy → Jy
+        # Convert: (MJy/sr × pixels) × (sr/pixel) = MJy → Jy → μJy
         flux_mjy = flux_mjy_sr * pixel_solid_angle_sr
         flux_error_mjy = flux_error_mjy_sr * pixel_solid_angle_sr
 
         flux_jy = flux_mjy * 1e6  # Jansky
         flux_error_jy = flux_error_mjy * 1e6  # Jansky
 
+        flux_ujy = flux_jy * 1e6  # microJansky (μJy)
+        flux_error_ujy = flux_error_jy * 1e6  # microJansky (μJy)
+
         logger.debug(
-            f"Unit conversion: {flux_mjy_sr:.6f} MJy/sr·pix → {flux_jy:.6f} Jy "
+            f"Unit conversion: {flux_mjy_sr:.6f} MJy/sr·pix → {flux_jy:.6f} Jy → {flux_ujy:.3f} μJy "
             f"(pixel solid angle = {pixel_solid_angle_sr:.2e} sr/pix)"
         )
         
@@ -499,12 +502,12 @@ def extract_source_photometry(
         mag_ab, mag_ab_error = calculate_ab_magnitude_from_jy(
             flux_jy, flux_error_jy, wavelength
         )
-        
+
         result = PhotometryResult(
             obs_id=obs_id,
             mjd=mef.mjd,
-            flux=flux_mjy_sr,
-            flux_error=flux_error_mjy_sr,
+            flux=flux_ujy,
+            flux_error=flux_error_ujy,
             wavelength=wavelength,
             bandwidth=bandwidth,
             flag=combined_flag,
@@ -514,11 +517,11 @@ def extract_source_photometry(
             mag_ab=mag_ab,
             mag_ab_error=mag_ab_error
         )
-        
+
         logger.info(
             f"Extracted photometry from {mef_file.name}: "
-            f"flux={flux_mjy_sr:.3f}±{flux_error_mjy_sr:.3f} MJy/sr "
-            f"({flux_jy:.3f}±{flux_error_jy:.3f} Jy) at λ={wavelength:.3f} μm, "
+            f"flux={flux_ujy:.3f}±{flux_error_ujy:.3f} μJy "
+            f"({flux_jy:.6f}±{flux_error_jy:.6f} Jy) at λ={wavelength:.3f} μm, "
             f"mag_AB={mag_ab:.3f}±{mag_ab_error:.3f}"
         )
         

@@ -1,7 +1,7 @@
 """
 Magnitude conversion functions for SPHEREx photometry.
 
-Converts flux measurements in MJy/sr to AB magnitude system using astropy units.
+Converts flux density measurements in Jansky to AB magnitude system using astropy units.
 """
 
 import logging

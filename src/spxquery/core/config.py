@@ -231,8 +231,8 @@ class PhotometryResult:
     """Result from aperture photometry on a single observation."""
     obs_id: str
     mjd: float
-    flux: float  # MJy/sr
-    flux_error: float  # MJy/sr
+    flux: float  # microJansky (uJy)
+    flux_error: float  # microJansky (uJy)
     wavelength: float  # microns
     bandwidth: float  # microns
     flag: int  # Combined flag bitmap
@@ -241,7 +241,7 @@ class PhotometryResult:
     band: str
     mag_ab: Optional[float] = None  # AB magnitude
     mag_ab_error: Optional[float] = None  # AB magnitude error
-    
+
     @property
     def is_upper_limit(self) -> bool:
         """Check if measurement should be treated as upper limit."""

@@ -358,7 +358,7 @@ def create_spectrum_plot(
         ax.set_ylabel("AB Magnitude", fontsize=12)
         ax.invert_yaxis()  # Fainter sources have higher magnitudes
     else:
-        ax.set_ylabel("Flux (MJy/sr)", fontsize=12)
+        ax.set_ylabel("Flux Density (μJy)", fontsize=12)
     ax.set_title("SPHEREx Spectrum", fontsize=14)
     ax.grid(True, alpha=0.3)
     ax.legend()
@@ -580,7 +580,7 @@ def create_lightcurve_plot(
         ax.set_ylabel("AB Magnitude", fontsize=12)
         ax.invert_yaxis()  # Fainter sources have higher magnitudes
     else:
-        ax.set_ylabel("Flux (MJy/sr)", fontsize=12)
+        ax.set_ylabel("Flux Density (μJy)", fontsize=12)
     ax.set_title("SPHEREx Light Curve", fontsize=14)
     ax.grid(True, alpha=0.3)
 
