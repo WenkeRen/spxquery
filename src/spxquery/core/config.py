@@ -2,10 +2,16 @@
 Configuration and data models for SPXQuery package.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
+import json
+import logging
+
+from .. import __version__
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -14,12 +20,309 @@ class Source:
     ra: float  # Right ascension in degrees
     dec: float  # Declination in degrees
     name: Optional[str] = None
-    
+
     def __post_init__(self):
         if not 0 <= self.ra <= 360:
             raise ValueError(f"RA must be between 0 and 360 degrees, got {self.ra}")
         if not -90 <= self.dec <= 90:
             raise ValueError(f"Dec must be between -90 and 90 degrees, got {self.dec}")
+
+
+@dataclass
+class PhotometryConfig:
+    """
+    Advanced photometry configuration.
+
+    Attributes
+    ----------
+    annulus_inner_offset : float
+        Gap between aperture edge and inner annulus radius (pixels).
+        Default: 1.414 (√2). Reduce for crowded fields, increase for extended sources.
+    min_annulus_area : int
+        Minimum area for background annulus (pixels).
+        Default: 10. Increase for better statistics.
+    max_outer_radius : float
+        Maximum outer radius for background annulus (pixels).
+        Default: 5.0. Increase for faint sources.
+    min_usable_pixels : int
+        Minimum number of unflagged pixels required in annulus.
+        Default: 10. Increase for higher quality.
+    bg_sigma_clip_sigma : float
+        Sigma threshold for sigma-clipped background statistics.
+        Default: 3.0. Common values: 2.5 (strict), 3.0 (standard), 3.5 (lenient).
+    bg_sigma_clip_maxiters : int
+        Maximum iterations for sigma clipping of background.
+        Default: 3. Usually 1-5 is sufficient.
+    zodi_scale_min : float
+        Minimum allowed zodiacal scaling factor.
+        Default: 0.0. Negative values may indicate model failure.
+    zodi_scale_max : float
+        Maximum allowed zodiacal scaling factor.
+        Default: 10.0. Increase if studying high-zodiacal periods.
+    pixel_scale_fallback : float
+        Fallback pixel scale (arcsec/pixel) when WCS fails.
+        Default: 6.2 (SPHEREx). Change for other missions.
+    max_annulus_attempts : int
+        Maximum attempts to expand annulus when insufficient pixels.
+        Default: 5. Rarely needs adjustment.
+    annulus_expansion_step : float
+        Step size in pixels when expanding annulus.
+        Default: 0.5. Usually 0.3-1.0 is reasonable.
+    """
+    annulus_inner_offset: float = 1.414
+    min_annulus_area: int = 10
+    max_outer_radius: float = 5.0
+    min_usable_pixels: int = 10
+    bg_sigma_clip_sigma: float = 3.0
+    bg_sigma_clip_maxiters: int = 3
+    zodi_scale_min: float = 0.0
+    zodi_scale_max: float = 10.0
+    pixel_scale_fallback: float = 6.2
+    max_annulus_attempts: int = 5
+    annulus_expansion_step: float = 0.5
+
+    def __post_init__(self):
+        """Validate parameters."""
+        if self.annulus_inner_offset < 0:
+            raise ValueError(f"annulus_inner_offset must be >= 0, got {self.annulus_inner_offset}")
+        if self.min_annulus_area <= 0:
+            raise ValueError(f"min_annulus_area must be > 0, got {self.min_annulus_area}")
+        if self.max_outer_radius <= 0:
+            raise ValueError(f"max_outer_radius must be > 0, got {self.max_outer_radius}")
+        if self.min_usable_pixels <= 0:
+            raise ValueError(f"min_usable_pixels must be > 0, got {self.min_usable_pixels}")
+        if self.bg_sigma_clip_sigma <= 0:
+            raise ValueError(f"bg_sigma_clip_sigma must be > 0, got {self.bg_sigma_clip_sigma}")
+        if self.bg_sigma_clip_maxiters <= 0:
+            raise ValueError(f"bg_sigma_clip_maxiters must be > 0, got {self.bg_sigma_clip_maxiters}")
+        if self.zodi_scale_max <= self.zodi_scale_min:
+            raise ValueError(f"zodi_scale_max must be > zodi_scale_min")
+        if self.pixel_scale_fallback <= 0:
+            raise ValueError(f"pixel_scale_fallback must be > 0, got {self.pixel_scale_fallback}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'PhotometryConfig':
+        """Create from dictionary."""
+        # Only use keys that exist in the dataclass
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+
+@dataclass
+class VisualizationConfig:
+    """
+    Advanced visualization configuration.
+
+    Attributes
+    ----------
+    wavelength_cmap : str
+        Matplotlib colormap name for wavelength coding in light curves.
+        Default: "rainbow". Alternatives: "viridis", "plasma", "cividis".
+    date_cmap : str
+        Matplotlib colormap name for date coding in spectra.
+        Default: "viridis". Should differ from wavelength_cmap.
+    sigma_clip_sigma : float
+        Sigma threshold for outlier removal in plots.
+        Default: 3.0. Set to 100+ to disable outlier removal.
+    sigma_clip_maxiters : int
+        Maximum iterations for sigma clipping.
+        Default: 10. Usually sufficient.
+    ylim_percentile_min : float
+        Lower percentile for smart y-axis limits (0-100).
+        Default: 1.0. Use 0.0 to show all data.
+    ylim_percentile_max : float
+        Upper percentile for smart y-axis limits (0-100).
+        Default: 99.0. Use 100.0 to show all data.
+    ylim_padding_fraction : float
+        Padding fraction added to y-axis range.
+        Default: 0.1 (10%). Usually 0.05-0.2.
+    marker_size_good : float
+        Marker size for good measurements.
+        Default: 1.5. Increase for print publications.
+    marker_size_rejected : float
+        Marker size for rejected measurements.
+        Default: 2.0. Should be visible but not dominant.
+    marker_size_upper_limit : float
+        Marker size for upper limit arrows.
+        Default: 3.0. Should be clearly visible.
+    errorbar_alpha : float
+        Transparency for error bars (0-1).
+        Default: 0.2. Increase for print, decrease for screen.
+    marker_alpha : float
+        Transparency for markers (0-1).
+        Default: 0.9. Usually keep near 1.0.
+    errorbar_linewidth : float
+        Line width for error bars in points.
+        Default: 0.5. Increase for print publications.
+    figsize : Tuple[float, float]
+        Figure size in inches (width, height).
+        Default: (10, 8). Common journal sizes: (7.5, 6), (3.5, 3).
+    dpi : int
+        Resolution in dots per inch for saved figures.
+        Default: 150. Use 300 for print publications.
+    """
+    wavelength_cmap: str = "rainbow"
+    date_cmap: str = "viridis"
+    sigma_clip_sigma: float = 3.0
+    sigma_clip_maxiters: int = 10
+    ylim_percentile_min: float = 1.0
+    ylim_percentile_max: float = 99.0
+    ylim_padding_fraction: float = 0.1
+    marker_size_good: float = 1.5
+    marker_size_rejected: float = 2.0
+    marker_size_upper_limit: float = 3.0
+    errorbar_alpha: float = 0.2
+    marker_alpha: float = 0.9
+    errorbar_linewidth: float = 0.5
+    figsize: Tuple[float, float] = (10, 8)
+    dpi: int = 150
+
+    def __post_init__(self):
+        """Validate parameters."""
+        # Validate colormaps
+        import matplotlib.cm as cm
+        try:
+            cm.get_cmap(self.wavelength_cmap)
+        except ValueError:
+            raise ValueError(f"Invalid wavelength_cmap: '{self.wavelength_cmap}'")
+        try:
+            cm.get_cmap(self.date_cmap)
+        except ValueError:
+            raise ValueError(f"Invalid date_cmap: '{self.date_cmap}'")
+
+        # Validate numeric ranges
+        if not 0 <= self.ylim_percentile_min <= 100:
+            raise ValueError(f"ylim_percentile_min must be 0-100, got {self.ylim_percentile_min}")
+        if not 0 <= self.ylim_percentile_max <= 100:
+            raise ValueError(f"ylim_percentile_max must be 0-100, got {self.ylim_percentile_max}")
+        if self.ylim_percentile_min >= self.ylim_percentile_max:
+            raise ValueError(f"ylim_percentile_min must be < ylim_percentile_max")
+        if not 0 <= self.errorbar_alpha <= 1:
+            raise ValueError(f"errorbar_alpha must be 0-1, got {self.errorbar_alpha}")
+        if not 0 <= self.marker_alpha <= 1:
+            raise ValueError(f"marker_alpha must be 0-1, got {self.marker_alpha}")
+        if self.dpi <= 0:
+            raise ValueError(f"dpi must be > 0, got {self.dpi}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        data = asdict(self)
+        # Convert tuple to list for JSON serialization
+        if isinstance(data['figsize'], tuple):
+            data['figsize'] = list(data['figsize'])
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'VisualizationConfig':
+        """Create from dictionary."""
+        # Convert figsize list back to tuple
+        if 'figsize' in data and isinstance(data['figsize'], list):
+            data['figsize'] = tuple(data['figsize'])
+        # Only use keys that exist in the dataclass
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+
+@dataclass
+class DownloadConfig:
+    """
+    Advanced download configuration.
+
+    Attributes
+    ----------
+    chunk_size : int
+        Download chunk size in bytes.
+        Default: 8192 (8 KB). Increase for fast connections.
+    timeout : int
+        HTTP request timeout in seconds.
+        Default: 300 (5 minutes). Increase for slow connections.
+    max_retries : int
+        Number of retry attempts for failed downloads.
+        Default: 3. Increase for unreliable connections.
+    retry_delay : int
+        Delay between retry attempts in seconds.
+        Default: 5. Consider exponential backoff for many retries.
+    user_agent : str
+        User agent string for HTTP requests.
+        Default: "SPXQuery/<version>". Usually no need to change.
+    """
+    chunk_size: int = 8192
+    timeout: int = 300
+    max_retries: int = 3
+    retry_delay: int = 5
+    user_agent: str = field(default_factory=lambda: f"SPXQuery/{__version__}")
+
+    def __post_init__(self):
+        """Validate parameters."""
+        if self.chunk_size <= 0:
+            raise ValueError(f"chunk_size must be > 0, got {self.chunk_size}")
+        if self.timeout <= 0:
+            raise ValueError(f"timeout must be > 0, got {self.timeout}")
+        if self.max_retries < 0:
+            raise ValueError(f"max_retries must be >= 0, got {self.max_retries}")
+        if self.retry_delay < 0:
+            raise ValueError(f"retry_delay must be >= 0, got {self.retry_delay}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'DownloadConfig':
+        """Create from dictionary."""
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+
+@dataclass
+class AdvancedConfig:
+    """
+    Container for all advanced configuration options.
+
+    This class groups all advanced configuration objects together
+    for easier management and serialization.
+    """
+    photometry: PhotometryConfig = field(default_factory=PhotometryConfig)
+    visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
+    download: DownloadConfig = field(default_factory=DownloadConfig)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            'photometry': self.photometry.to_dict(),
+            'visualization': self.visualization.to_dict(),
+            'download': self.download.to_dict()
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'AdvancedConfig':
+        """Create from dictionary."""
+        return cls(
+            photometry=PhotometryConfig.from_dict(data.get('photometry', {})),
+            visualization=VisualizationConfig.from_dict(data.get('visualization', {})),
+            download=DownloadConfig.from_dict(data.get('download', {}))
+        )
+
+    def to_json_file(self, filepath: Path) -> None:
+        """Save to JSON file."""
+        filepath = Path(filepath)
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, 'w') as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def from_json_file(cls, filepath: Path) -> 'AdvancedConfig':
+        """Load from JSON file."""
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+        return cls.from_dict(data)
 
 
 @dataclass
@@ -42,12 +345,21 @@ class QueryConfig:
     bad_flags: List[int] = field(default_factory=lambda: [0, 1, 2, 6, 7, 9, 10, 11, 15])  # Flags to reject
     use_magnitude: bool = False  # If True, plot AB magnitude instead of flux (default: False)
     show_errorbars: bool = True  # If True, show errorbars on plots (default: True)
+    advanced_params_file: Optional[Path] = None  # Path to JSON file with advanced parameters
+    advanced: AdvancedConfig = field(default_factory=AdvancedConfig)  # Advanced configuration
     _auto_loaded: bool = field(default=False, init=False, repr=False)  # Internal flag
-    
+
     def __post_init__(self):
         # Convert to Path if string
         if isinstance(self.output_dir, str):
             self.output_dir = Path(self.output_dir)
+
+        # Load advanced parameters from file if provided
+        if self.advanced_params_file is not None:
+            from ..utils.params import load_advanced_config
+            self.advanced_params_file = Path(self.advanced_params_file)
+            self.advanced = load_advanced_config(self.advanced_params_file)
+            logger.info(f"Loaded advanced parameters from {self.advanced_params_file}")
 
         # Validate bands
         valid_bands = ['D1', 'D2', 'D3', 'D4', 'D5', 'D6']

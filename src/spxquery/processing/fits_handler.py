@@ -215,7 +215,7 @@ def get_wavelength_at_position(mef: SPHERExMEF, x: float, y: float) -> Tuple[flo
     return wavelength, bandwidth
 
 
-def get_pixel_scale_at_position(wcs: WCS, x: float, y: float) -> float:
+def get_pixel_scale_at_position(wcs: WCS, x: float, y: float, pixel_scale_fallback: float = 6.2) -> float:
     """
     Calculate the pixel scale in arcsec/pixel at a given position using WCS.
 
@@ -228,6 +228,8 @@ def get_pixel_scale_at_position(wcs: WCS, x: float, y: float) -> float:
         World Coordinate System object
     x, y : float
         Pixel coordinates (0-based)
+    pixel_scale_fallback : float
+        Fallback pixel scale in arcsec/pixel if WCS fails (default: 6.2 for SPHEREx)
 
     Returns
     -------
@@ -252,8 +254,8 @@ def get_pixel_scale_at_position(wcs: WCS, x: float, y: float) -> float:
         return pixel_scale_arcsec
 
     except Exception as e:
-        logger.warning(f"Failed to calculate pixel scale from WCS: {e}. Using default 6.2 arcsec/pixel")
-        return 6.2  # Fallback to nominal SPHEREx pixel scale
+        logger.warning(f"Failed to calculate pixel scale from WCS: {e}. Using fallback {pixel_scale_fallback} arcsec/pixel")
+        return pixel_scale_fallback  # Fallback to configured pixel scale
 
 
 def get_flag_info(flag_value: int) -> Dict[str, bool]:
@@ -429,16 +431,16 @@ def estimate_zodiacal_scaling(
 
     logger.info(f"Zodiacal scaling factor: {scale_factor:.4f}")
 
-    # Sanity check - scale factor should be reasonably close to 1
-    if scale_factor <= 0 or scale_factor > 10:
-        logger.warning(f"Unusual scaling factor {scale_factor:.4f} - using 1.0")
-        return 1.0
-
     return scale_factor
 
 
 def subtract_zodiacal_background(
-    image: np.ndarray, zodi: np.ndarray, flags: np.ndarray, variance: Optional[np.ndarray] = None
+    image: np.ndarray,
+    zodi: np.ndarray,
+    flags: np.ndarray,
+    variance: Optional[np.ndarray] = None,
+    zodi_scale_min: float = 0.0,
+    zodi_scale_max: float = 10.0
 ) -> Tuple[np.ndarray, float]:
     """
     Subtract zodiacal light background from image with amplitude scaling.
@@ -456,6 +458,10 @@ def subtract_zodiacal_background(
         Flag bitmap array
     variance : np.ndarray, optional
         Variance array for weighted fitting
+    zodi_scale_min : float
+        Minimum allowed zodiacal scaling factor
+    zodi_scale_max : float
+        Maximum allowed zodiacal scaling factor
 
     Returns
     -------
@@ -469,6 +475,11 @@ def subtract_zodiacal_background(
 
     # Estimate zodiacal scaling factor
     scale_factor = estimate_zodiacal_scaling(image, zodi, bg_mask, variance)
+
+    # Validate scale factor
+    if scale_factor <= zodi_scale_min or scale_factor > zodi_scale_max:
+        logger.warning(f"Unusual scaling factor {scale_factor:.4f} (outside [{zodi_scale_min}, {zodi_scale_max}]) - using 1.0")
+        scale_factor = 1.0
 
     # Apply scaled subtraction
     corrected_image = image - (scale_factor * zodi)

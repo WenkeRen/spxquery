@@ -4,7 +4,7 @@ Main pipeline orchestrator for SPXQuery package with flexible, resumable executi
 
 import logging
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Union
 
 from ..core.config import QueryConfig, PipelineState, DownloadResult
 from ..core.query import query_spherex_observations, print_query_summary
@@ -377,7 +377,8 @@ class SPXQueryPipeline:
             self.config.source,
             aperture_radius=self.config.aperture_diameter / 2.0,  # Convert diameter to radius
             subtract_zodi=True,
-            max_workers=self.config.max_processing_workers
+            max_workers=self.config.max_processing_workers,
+            photometry_config=self.config.advanced.photometry  # Pass advanced photometry config
         )
 
         if not photometry_results:
@@ -457,7 +458,8 @@ class SPXQueryPipeline:
             sigma_threshold=self.config.sigma_threshold,
             bad_flags=self.config.bad_flags,
             use_magnitude=self.config.use_magnitude,
-            show_errorbars=self.config.show_errorbars
+            show_errorbars=self.config.show_errorbars,
+            visualization_config=self.config.advanced.visualization  # Pass advanced visualization config
         )
 
         # Update state
@@ -533,7 +535,8 @@ def run_pipeline(
     use_magnitude: bool = False,
     show_errorbars: bool = True,
     skip_existing_downloads: bool = True,
-    pipeline_stages: Optional[List[str]] = None
+    pipeline_stages: Optional[List[str]] = None,
+    advanced_params_file: Optional[Union[str, Path]] = None
 ) -> None:
     """
     Convenience function to run the pipeline with sensible defaults.
@@ -576,6 +579,20 @@ def run_pipeline(
         If True, skip already downloaded files. If False, re-download all (default: True)
     pipeline_stages : List[str], optional
         List of stages to execute (default: ['query', 'download', 'processing', 'visualization'])
+    advanced_params_file : str or Path, optional
+        Path to JSON file with advanced parameters (photometry, visualization, download settings).
+        If provided, these parameters are loaded with priority: user input > JSON file > defaults
+
+    Examples
+    --------
+    >>> # Basic usage
+    >>> run_pipeline(ra=304.69, dec=42.44, output_dir="output")
+
+    >>> # With advanced parameters
+    >>> from spxquery.utils.params import export_default_parameters
+    >>> params_file = export_default_parameters("output")
+    >>> # Edit output/spxquery_default_params.json
+    >>> run_pipeline(ra=304.69, dec=42.44, advanced_params_file=params_file)
     """
     # Set up logging
     setup_logging(log_level)
@@ -596,7 +613,8 @@ def run_pipeline(
         sigma_threshold=sigma_threshold,
         bad_flags=bad_flags if bad_flags is not None else [0, 1, 2, 6, 7, 9, 10, 11, 15],
         use_magnitude=use_magnitude,
-        show_errorbars=show_errorbars
+        show_errorbars=show_errorbars,
+        advanced_params_file=advanced_params_file  # Pass advanced params file
     )
 
     # Create and run pipeline

@@ -4,7 +4,7 @@ Visualization functions for SPHEREx time-domain data.
 
 import logging
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, TYPE_CHECKING
 
 import numpy as np
 import numpy.ma as ma
@@ -16,6 +16,9 @@ from matplotlib.colors import Normalize, to_rgba
 from astropy.stats import sigma_clip
 
 from ..core.config import PhotometryResult
+
+if TYPE_CHECKING:
+    from ..core.config import VisualizationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -626,14 +629,15 @@ def create_lightcurve_plot(
 def create_combined_plot(
     photometry_results: List[PhotometryResult],
     output_path: Optional[Path] = None,
-    figsize: Tuple[float, float] = (10, 8),
+    figsize: Optional[Tuple[float, float]] = None,
     apply_clipping: bool = True,
-    sigma: float = 3.0,
+    sigma: Optional[float] = None,
     apply_quality_filters: bool = True,
     sigma_threshold: float = 5.0,
     bad_flags: Optional[List[int]] = None,
     use_magnitude: bool = False,
     show_errorbars: bool = True,
+    visualization_config: Optional['VisualizationConfig'] = None
 ) -> Figure:
     """
     Create combined plot with spectrum and light curve.
@@ -649,12 +653,12 @@ def create_combined_plot(
         Photometry measurements (all points included)
     output_path : Path, optional
         Path to save figure. If None, figure is not saved.
-    figsize : Tuple[float, float]
-        Figure size in inches
+    figsize : Tuple[float, float], optional
+        Figure size in inches (overrides visualization_config if provided)
     apply_clipping : bool
         Whether to apply sigma clipping to remove outliers
-    sigma : float
-        Number of standard deviations for sigma clipping
+    sigma : float, optional
+        Number of standard deviations for sigma clipping (overrides visualization_config if provided)
     apply_quality_filters : bool
         Whether to apply quality control filters (SNR and flags)
     sigma_threshold : float
@@ -666,12 +670,29 @@ def create_combined_plot(
         If True, plot AB magnitude instead of flux (default: False)
     show_errorbars : bool
         If True, show errorbars (default: True)
+    visualization_config : VisualizationConfig, optional
+        Advanced visualization configuration. If None, uses defaults.
 
     Returns
     -------
     Figure
         Matplotlib figure with both plots
+
+    Notes
+    -----
+    Priority: explicit parameters > visualization_config > defaults
     """
+    from ..core.config import VisualizationConfig
+
+    # Use default config if none provided
+    if visualization_config is None:
+        visualization_config = VisualizationConfig()
+
+    # Apply parameter priority: explicit > config > defaults
+    if figsize is None:
+        figsize = visualization_config.figsize
+    if sigma is None:
+        sigma = visualization_config.sigma_clip_sigma
     # Create flag mask if quality filtering is requested
     bad_flags_mask = None
     if apply_quality_filters:
@@ -731,7 +752,7 @@ def create_combined_plot(
     # Save if requested
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(output_path, dpi=150, bbox_inches="tight")
+        fig.savefig(output_path, dpi=visualization_config.dpi, bbox_inches="tight")
         logger.info(f"Saved combined plot to {output_path}")
 
     return fig
