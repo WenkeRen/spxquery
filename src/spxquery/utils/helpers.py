@@ -6,7 +6,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 def setup_logging(level: str = "INFO") -> None:
     """
     Set up logging configuration.
-    
+
     Parameters
     ----------
     level : str
@@ -22,15 +22,15 @@ def setup_logging(level: str = "INFO") -> None:
     """
     logging.basicConfig(
         level=getattr(logging, level.upper()),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
 
 
 def save_json(data: Dict[str, Any], filepath: Path) -> None:
     """
     Save dictionary to JSON file.
-    
+
     Parameters
     ----------
     data : Dict[str, Any]
@@ -39,7 +39,7 @@ def save_json(data: Dict[str, Any], filepath: Path) -> None:
         Output file path
     """
     filepath.parent.mkdir(parents=True, exist_ok=True)
-    with open(filepath, 'w') as f:
+    with open(filepath, "w") as f:
         json.dump(data, f, indent=2, default=str)
     logger.debug(f"Saved JSON to {filepath}")
 
@@ -47,18 +47,18 @@ def save_json(data: Dict[str, Any], filepath: Path) -> None:
 def load_json(filepath: Path) -> Dict[str, Any]:
     """
     Load dictionary from JSON file.
-    
+
     Parameters
     ----------
     filepath : Path
         Input file path
-    
+
     Returns
     -------
     Dict[str, Any]
         Loaded data
     """
-    with open(filepath, 'r') as f:
+    with open(filepath, "r") as f:
         data = json.load(f)
     logger.debug(f"Loaded JSON from {filepath}")
     return data
@@ -67,18 +67,18 @@ def load_json(filepath: Path) -> Dict[str, Any]:
 def format_file_size(size_bytes: float) -> str:
     """
     Format file size in human-readable format.
-    
+
     Parameters
     ----------
     size_bytes : float
         Size in bytes
-    
+
     Returns
     -------
     str
         Formatted size string
     """
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
         if size_bytes < 1024.0:
             return f"{size_bytes:.1f} {unit}"
         size_bytes /= 1024.0
@@ -88,14 +88,14 @@ def format_file_size(size_bytes: float) -> str:
 def validate_directory(path: Path, create: bool = True) -> bool:
     """
     Validate and optionally create directory.
-    
+
     Parameters
     ----------
     path : Path
         Directory path
     create : bool
         Whether to create directory if it doesn't exist
-    
+
     Returns
     -------
     bool
@@ -106,7 +106,7 @@ def validate_directory(path: Path, create: bool = True) -> bool:
             logger.error(f"{path} exists but is not a directory")
             return False
         return True
-    
+
     if create:
         try:
             path.mkdir(parents=True, exist_ok=True)
@@ -115,7 +115,7 @@ def validate_directory(path: Path, create: bool = True) -> bool:
         except Exception as e:
             logger.error(f"Failed to create directory {path}: {e}")
             return False
-    
+
     return False
 
 
@@ -144,6 +144,7 @@ def get_file_list(directory: Path, pattern: str = "*.fits") -> list[Path]:
 
 # Cutout-related helper functions
 
+
 def validate_cutout_size(size_str: str) -> bool:
     """
     Validate cutout size parameter format.
@@ -170,20 +171,20 @@ def validate_cutout_size(size_str: str) -> bool:
 
     # Pattern: number[,number][units]
     # Units: px, pix, pixels, arcsec, arcmin, deg, rad
-    pattern = r'^(\d+\.?\d*)(,\d+\.?\d*)?(px|pix|pixels|arcsec|arcmin|deg|rad)?$'
+    pattern = r"^(\d+\.?\d*)(,\d+\.?\d*)?(px|pix|pixels|arcsec|arcmin|deg|rad)?$"
 
     match = re.match(pattern, size_str.strip())
     if not match:
         return False
 
     # Extract values and check they're positive
-    values = size_str.split(',')
+    values = size_str.split(",")
     try:
         # Remove units from the last value if present
         last_val = values[-1]
-        for unit in ['px', 'pix', 'pixels', 'arcsec', 'arcmin', 'deg', 'rad']:
+        for unit in ["px", "pix", "pixels", "arcsec", "arcmin", "deg", "rad"]:
             if last_val.endswith(unit):
-                last_val = last_val[:-len(unit)]
+                last_val = last_val[: -len(unit)]
                 break
         values[-1] = last_val
 
@@ -224,7 +225,7 @@ def validate_cutout_center(center_str: str) -> bool:
 
     # Pattern: number,number[units]
     # Units: px, pix, pixels, deg, rad, arcsec, arcmin (though arcsec/arcmin unusual for center)
-    pattern = r'^(-?\d+\.?\d*),(-?\d+\.?\d*)(px|pix|pixels|deg|rad|arcsec|arcmin)?$'
+    pattern = r"^(-?\d+\.?\d*),(-?\d+\.?\d*)(px|pix|pixels|deg|rad|arcsec|arcmin)?$"
 
     match = re.match(pattern, center_str.strip())
     if not match:
@@ -232,21 +233,21 @@ def validate_cutout_center(center_str: str) -> bool:
 
     # Extract and validate coordinates
     try:
-        coords = center_str.split(',')
+        coords = center_str.split(",")
         x_str = coords[0].strip()
         y_str = coords[1].strip()
 
         # Remove units from y if present
-        for unit in ['px', 'pix', 'pixels', 'deg', 'rad', 'arcsec', 'arcmin']:
+        for unit in ["px", "pix", "pixels", "deg", "rad", "arcsec", "arcmin"]:
             if y_str.endswith(unit):
-                y_str = y_str[:-len(unit)]
+                y_str = y_str[: -len(unit)]
                 break
 
         x = float(x_str)
         y = float(y_str)
 
         # If units are degrees (default or explicit), validate Dec range
-        if 'px' not in center_str and 'pix' not in center_str:
+        if "px" not in center_str and "pix" not in center_str:
             # Assume degrees, check Dec in [-90, 90]
             # Y is declination in astronomical coordinates
             if not -90 <= y <= 90:
@@ -260,10 +261,7 @@ def validate_cutout_center(center_str: str) -> bool:
 
 
 def format_cutout_url_params(
-    cutout_size: str | None,
-    cutout_center: str | None,
-    source_ra: float,
-    source_dec: float
+    cutout_size: str | None, cutout_center: str | None, source_ra: float, source_dec: float
 ) -> str:
     """
     Format cutout parameters as URL query string.
@@ -314,11 +312,7 @@ def format_cutout_url_params(
     return params
 
 
-def estimate_cutout_size_mb(
-    cutout_size: str | None,
-    full_size_mb: float = 71.6,
-    min_size_mb: float = 5.0
-) -> float:
+def estimate_cutout_size_mb(cutout_size: str | None, full_size_mb: float = 71.6, min_size_mb: float = 5.0) -> float:
     """
     Estimate cutout file size based on dimensions.
 
@@ -371,36 +365,35 @@ def estimate_cutout_size_mb(
         size_str = cutout_size.lower().strip()
 
         # Parse dimensions and units
-        if 'arcsec' in size_str:
+        if "arcsec" in size_str:
             # Remove unit and parse
-            value_str = size_str.replace('arcsec', '').strip()
-            values = [float(x.strip()) for x in value_str.split(',')]
+            value_str = size_str.replace("arcsec", "").strip()
+            values = [float(x.strip()) for x in value_str.split(",")]
             # Convert arcsec to pixels
             dims_pixels = [v / pixel_scale_arcsec for v in values]
-        elif 'arcmin' in size_str:
-            value_str = size_str.replace('arcmin', '').strip()
-            values = [float(x.strip()) for x in value_str.split(',')]
+        elif "arcmin" in size_str:
+            value_str = size_str.replace("arcmin", "").strip()
+            values = [float(x.strip()) for x in value_str.split(",")]
             # Convert arcmin to pixels (1 arcmin = 60 arcsec)
             dims_pixels = [v * 60.0 / pixel_scale_arcsec for v in values]
-        elif 'deg' in size_str:
-            value_str = size_str.replace('deg', '').strip()
-            values = [float(x.strip()) for x in value_str.split(',')]
+        elif "deg" in size_str:
+            value_str = size_str.replace("deg", "").strip()
+            values = [float(x.strip()) for x in value_str.split(",")]
             # Convert degrees to pixels (1 deg = 3600 arcsec)
             dims_pixels = [v * 3600.0 / pixel_scale_arcsec for v in values]
-        elif 'rad' in size_str:
-            import math
-            value_str = size_str.replace('rad', '').strip()
-            values = [float(x.strip()) for x in value_str.split(',')]
+        elif "rad" in size_str:
+            value_str = size_str.replace("rad", "").strip()
+            values = [float(x.strip()) for x in value_str.split(",")]
             # Convert radians to pixels (1 rad = 206265 arcsec)
             dims_pixels = [v * 206265.0 / pixel_scale_arcsec for v in values]
-        elif 'px' in size_str or 'pix' in size_str:
+        elif "px" in size_str or "pix" in size_str:
             # Already in pixels
-            for unit in ['pixels', 'pixel', 'pix', 'px']:
-                size_str = size_str.replace(unit, '')
-            dims_pixels = [float(x.strip()) for x in size_str.split(',')]
+            for unit in ["pixels", "pixel", "pix", "px"]:
+                size_str = size_str.replace(unit, "")
+            dims_pixels = [float(x.strip()) for x in size_str.split(",")]
         else:
             # No units specified, assume degrees (IRSA default)
-            values = [float(x.strip()) for x in size_str.split(',')]
+            values = [float(x.strip()) for x in size_str.split(",")]
             dims_pixels = [v * 3600.0 / pixel_scale_arcsec for v in values]
 
         # Calculate cutout area
@@ -424,8 +417,10 @@ def estimate_cutout_size_mb(
         # Apply minimum size constraint (auxiliary data: PSF, WCS, headers)
         final_size = max(estimated_size, min_size_mb)
 
-        logger.debug(f"Estimated cutout size: {final_size:.2f} MB for {cutout_size} "
-                    f"({cutout_pixels:.0f} pixels, ratio={size_ratio:.4f})")
+        logger.debug(
+            f"Estimated cutout size: {final_size:.2f} MB for {cutout_size} "
+            f"({cutout_pixels:.0f} pixels, ratio={size_ratio:.4f})"
+        )
 
         return final_size
 
@@ -433,7 +428,9 @@ def estimate_cutout_size_mb(
         logger.warning(f"Could not estimate cutout size for '{cutout_size}': {e}")
         return full_size_mb
 
+
 # Quality control helper functions
+
 
 def create_flag_mask(bad_flags: list[int]) -> int:
     """
@@ -459,7 +456,7 @@ def create_flag_mask(bad_flags: list[int]) -> int:
     """
     mask = 0
     for bit in bad_flags:
-        mask |= (1 << bit)
+        mask |= 1 << bit
     return mask
 
 
@@ -495,9 +492,7 @@ def check_flag_bits(flag: int, bad_flags_mask: int) -> bool:
 
 
 def apply_quality_filters(
-    photometry_results: list,
-    sigma_threshold: float = 5.0,
-    bad_flags: list[int] | None = None
+    photometry_results: list, sigma_threshold: float = 5.0, bad_flags: list[int] | None = None
 ) -> tuple[list, dict]:
     """
     Apply quality control filters to photometry results.
@@ -568,15 +563,15 @@ def apply_quality_filters(
             filtered.append(result)
 
     filter_stats = {
-        'total_input': len(photometry_results),
-        'total_output': len(filtered),
-        'rejected_snr': rejected_snr,
-        'rejected_flag': rejected_flag,
-        'rejected_both': rejected_both,
-        'total_rejected': rejected_snr + rejected_flag + rejected_both,
-        'sigma_threshold': sigma_threshold,
-        'bad_flags': bad_flags,
-        'bad_flags_mask': bad_flags_mask
+        "total_input": len(photometry_results),
+        "total_output": len(filtered),
+        "rejected_snr": rejected_snr,
+        "rejected_flag": rejected_flag,
+        "rejected_both": rejected_both,
+        "total_rejected": rejected_snr + rejected_flag + rejected_both,
+        "sigma_threshold": sigma_threshold,
+        "bad_flags": bad_flags,
+        "bad_flags_mask": bad_flags_mask,
     }
 
     logger.info(
@@ -590,6 +585,7 @@ def apply_quality_filters(
 @dataclass
 class ClassifiedPhotometry:
     """Quality-classified photometry points."""
+
     good_regular: List
     rejected_regular: List
     good_upper_limits: List
@@ -600,7 +596,7 @@ def classify_photometry_by_quality(
     photometry_results: List,
     sigma_threshold: float,
     bad_flags_mask: Optional[int] = None,
-    separate_upper_limits: bool = True
+    separate_upper_limits: bool = True,
 ) -> ClassifiedPhotometry:
     """
     Classify photometry points as good/rejected based on SNR and flag filters.
@@ -681,5 +677,5 @@ def classify_photometry_by_quality(
         good_regular=good_regular,
         rejected_regular=rejected_regular,
         good_upper_limits=good_upper_limits,
-        rejected_upper_limits=rejected_upper_limits
+        rejected_upper_limits=rejected_upper_limits,
     )

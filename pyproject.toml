@@ -51,9 +51,7 @@ scipy = "^1.12"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4.2"
 pytest-cov = "^7.0.0"
-black = "^25.9.0"
-flake8 = "^7.3.0"
-isort = "^7.0.0"
+ruff = "^0.9.0"
 mypy = "^1.0"
 
 [tool.poetry.group.docs.dependencies]
@@ -69,15 +67,30 @@ notebook = "^7.4.7"
 [tool.poetry.scripts]
 spxquery = "spxquery.core.pipeline:run_pipeline"
 
-[tool.black]
-line-length = 100
-target-version = ['py311', 'py312', 'py313']
-include = '\.pyi?$'
+[tool.ruff]
+line-length = 120
+target-version = "py311"
 
-[tool.isort]
-profile = "black"
-line_length = 100
-multi_line_output = 3
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "C90", # mccabe complexity
+]
+ignore = [
+    "F821",  # Undefined name (for forward references in type hints)
+    "F841",  # Local variable assigned but never used
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 30  # Accommodate complex visualization functions
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

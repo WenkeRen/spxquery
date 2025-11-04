@@ -4,18 +4,20 @@ Main pipeline orchestrator for SPXQuery package with flexible, resumable executi
 
 import logging
 from pathlib import Path
-from typing import Optional, List, Union
+from typing import List, Optional, Union
 
-from ..core.config import QueryConfig, PipelineState, DownloadResult
-from ..core.query import query_spherex_observations, print_query_summary
+from ..core.config import DownloadResult, PipelineState, QueryConfig
 from ..core.download import parallel_download, print_download_summary
-from ..processing.photometry import process_all_observations
+from ..core.query import print_query_summary, query_spherex_observations
 from ..processing.lightcurve import (
-    generate_lightcurve_dataframe, save_lightcurve_csv, print_lightcurve_summary,
-    load_lightcurve_from_csv
+    generate_lightcurve_dataframe,
+    load_lightcurve_from_csv,
+    print_lightcurve_summary,
+    save_lightcurve_csv,
 )
+from ..processing.photometry import process_all_observations
+from ..utils.helpers import format_cutout_url_params, get_file_list, load_json, save_json, setup_logging
 from ..visualization.plots import create_combined_plot
-from ..utils.helpers import setup_logging, save_json, load_json, get_file_list, format_cutout_url_params
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +35,10 @@ class SPXQueryPipeline:
 
     # Define stage dependencies
     STAGE_DEPENDENCIES = {
-        'query': [],
-        'download': ['query'],
-        'processing': ['query', 'download'],
-        'visualization': ['query', 'download', 'processing']
+        "query": [],
+        "download": ["query"],
+        "processing": ["query", "download"],
+        "visualization": ["query", "download", "processing"],
     }
 
     def __init__(self, config: QueryConfig, pipeline_stages: Optional[List[str]] = None):
@@ -55,19 +57,14 @@ class SPXQueryPipeline:
 
         # Set pipeline stages (default or custom)
         if pipeline_stages is None:
-            pipeline_stages = ['query', 'download', 'processing', 'visualization']
+            pipeline_stages = ["query", "download", "processing", "visualization"]
 
         # Initialize state
-        self.state = PipelineState(
-            stage='query',
-            config=config,
-            pipeline_stages=pipeline_stages,
-            completed_stages=[]
-        )
+        self.state = PipelineState(stage="query", config=config, pipeline_stages=pipeline_stages, completed_stages=[])
 
         # Set up directories
-        self.data_dir = config.output_dir / 'data'
-        self.results_dir = config.output_dir / 'results'
+        self.data_dir = config.output_dir / "data"
+        self.results_dir = config.output_dir / "results"
         # State file named after source for easy identification
         source_name = config.source.name or f"source_{config.source.ra:.4f}_{config.source.dec:.4f}"
         self.state_file = config.output_dir / f"{source_name}.json"
@@ -188,10 +185,7 @@ class SPXQueryPipeline:
             return
 
         # Calculate total size from successful downloads
-        actual_total_mb = sum(
-            result.size_mb for result in download_results
-            if result.success and result.size_mb
-        )
+        actual_total_mb = sum(result.size_mb for result in download_results if result.success and result.size_mb)
         actual_total_gb = actual_total_mb / 1024.0
         old_total_gb = self.state.query_results.total_size_gb
 
@@ -205,19 +199,15 @@ class SPXQueryPipeline:
 
         # Save updated query summary with actual total size
         query_info = {
-            'source': {
-                'ra': self.config.source.ra,
-                'dec': self.config.source.dec,
-                'name': self.config.source.name
-            },
-            'query_time': self.state.query_results.query_time.isoformat(),
-            'n_observations': len(self.state.query_results),
-            'time_span_days': self.state.query_results.time_span_days,
-            'total_size_gb': actual_total_gb,
-            'total_size_gb_estimated': False,  # Now using actual sizes
-            'band_counts': self.state.query_results.band_counts
+            "source": {"ra": self.config.source.ra, "dec": self.config.source.dec, "name": self.config.source.name},
+            "query_time": self.state.query_results.query_time.isoformat(),
+            "n_observations": len(self.state.query_results),
+            "time_span_days": self.state.query_results.time_span_days,
+            "total_size_gb": actual_total_gb,
+            "total_size_gb_estimated": False,  # Now using actual sizes
+            "band_counts": self.state.query_results.band_counts,
         }
-        save_json(query_info, self.results_dir / 'query_summary.json')
+        save_json(query_info, self.results_dir / "query_summary.json")
 
     def run_full_pipeline(self, skip_existing_downloads: bool = True) -> None:
         """
@@ -233,18 +223,18 @@ class SPXQueryPipeline:
 
         # Execute each stage in order
         for stage in self.state.pipeline_stages:
-            if stage == 'query':
+            if stage == "query":
                 self.run_query()
-            elif stage == 'download':
+            elif stage == "download":
                 self.run_download(skip_existing=skip_existing_downloads)
-            elif stage == 'processing':
+            elif stage == "processing":
                 self.run_processing()
-            elif stage == 'visualization':
+            elif stage == "visualization":
                 self.run_visualization()
             else:
                 logger.warning(f"Unknown stage '{stage}', skipping")
 
-        self.state.stage = 'complete'
+        self.state.stage = "complete"
         self.save_state()
         logger.info("Pipeline execution complete")
 
@@ -254,9 +244,7 @@ class SPXQueryPipeline:
 
         # Query SPHEREx archive with cutout size for accurate file size estimation
         query_results = query_spherex_observations(
-            self.config.source,
-            self.config.bands,
-            cutout_size=self.config.cutout_size
+            self.config.source, self.config.bands, cutout_size=self.config.cutout_size
         )
 
         # Print summary
@@ -264,24 +252,20 @@ class SPXQueryPipeline:
 
         # Save query results
         query_info = {
-            'source': {
-                'ra': self.config.source.ra,
-                'dec': self.config.source.dec,
-                'name': self.config.source.name
-            },
-            'query_time': query_results.query_time.isoformat(),
-            'n_observations': len(query_results),
-            'time_span_days': query_results.time_span_days,
-            'total_size_gb': query_results.total_size_gb,
-            'total_size_gb_estimated': True,  # Mark as estimated
-            'band_counts': query_results.band_counts
+            "source": {"ra": self.config.source.ra, "dec": self.config.source.dec, "name": self.config.source.name},
+            "query_time": query_results.query_time.isoformat(),
+            "n_observations": len(query_results),
+            "time_span_days": query_results.time_span_days,
+            "total_size_gb": query_results.total_size_gb,
+            "total_size_gb_estimated": True,  # Mark as estimated
+            "band_counts": query_results.band_counts,
         }
-        save_json(query_info, self.results_dir / 'query_summary.json')
+        save_json(query_info, self.results_dir / "query_summary.json")
 
         # Update state
         self.state.query_results = query_results
-        self.state.stage = 'download'
-        self.mark_stage_complete('query')
+        self.state.stage = "download"
+        self.mark_stage_complete("query")
         self.save_state()
 
     def run_download(self, skip_existing: bool = True) -> None:
@@ -294,7 +278,7 @@ class SPXQueryPipeline:
             If True, skip files that already exist. If False, re-download all files.
         """
         # Check dependencies
-        self.check_dependencies('download')
+        self.check_dependencies("download")
 
         if not self.state.query_results:
             raise RuntimeError("No query results available. Run query stage first.")
@@ -309,10 +293,7 @@ class SPXQueryPipeline:
             # Append cutout parameters if specified
             if self.config.cutout_size:
                 cutout_params = format_cutout_url_params(
-                    self.config.cutout_size,
-                    self.config.cutout_center,
-                    self.config.source.ra,
-                    self.config.source.dec
+                    self.config.cutout_size, self.config.cutout_center, self.config.source.ra, self.config.source.dec
                 )
                 url = url + cutout_params
                 logger.debug(f"Added cutout to {obs.obs_id}: {cutout_params}")
@@ -321,38 +302,33 @@ class SPXQueryPipeline:
 
         if not download_info:
             logger.warning("No observations to download")
-            self.state.stage = 'processing'
-            self.mark_stage_complete('download')
+            self.state.stage = "processing"
+            self.mark_stage_complete("download")
             self.save_state()
             return
 
         # Download files
         download_results = parallel_download(
-            download_info,
-            self.data_dir,
-            max_workers=self.config.max_download_workers,
-            skip_existing=skip_existing
+            download_info, self.data_dir, max_workers=self.config.max_download_workers, skip_existing=skip_existing
         )
 
         # Print summary
         print_download_summary(download_results)
 
         # Update state with downloaded files
-        self.state.downloaded_files = [
-            r.local_path for r in download_results if r.success
-        ]
+        self.state.downloaded_files = [r.local_path for r in download_results if r.success]
 
         # Update QueryResults with actual file sizes from download
         self._update_file_sizes_from_download(download_results)
 
-        self.state.stage = 'processing'
-        self.mark_stage_complete('download')
+        self.state.stage = "processing"
+        self.mark_stage_complete("download")
         self.save_state()
 
     def run_processing(self) -> None:
         """Execute processing stage."""
         # Check dependencies
-        self.check_dependencies('processing')
+        self.check_dependencies("processing")
 
         logger.info("Running processing stage")
 
@@ -363,8 +339,8 @@ class SPXQueryPipeline:
 
         if not self.state.downloaded_files:
             logger.warning("No FITS files found for processing")
-            self.state.stage = 'visualization'
-            self.mark_stage_complete('processing')
+            self.state.stage = "visualization"
+            self.mark_stage_complete("processing")
             self.save_state()
             return
 
@@ -378,13 +354,13 @@ class SPXQueryPipeline:
             aperture_radius=self.config.aperture_diameter / 2.0,  # Convert diameter to radius
             subtract_zodi=True,
             max_workers=self.config.max_processing_workers,
-            photometry_config=self.config.advanced.photometry  # Pass advanced photometry config
+            photometry_config=self.config.advanced.photometry,  # Pass advanced photometry config
         )
 
         if not photometry_results:
             logger.warning("No photometry results obtained")
-            self.state.stage = 'complete'
-            self.mark_stage_complete('processing')
+            self.state.stage = "complete"
+            self.mark_stage_complete("processing")
             self.save_state()
             return
 
@@ -392,7 +368,7 @@ class SPXQueryPipeline:
         df = generate_lightcurve_dataframe(photometry_results, self.config.source)
 
         # Save light curve CSV
-        csv_path = self.results_dir / 'lightcurve.csv'
+        csv_path = self.results_dir / "lightcurve.csv"
         save_lightcurve_csv(df, csv_path)
 
         # Print summary
@@ -401,19 +377,19 @@ class SPXQueryPipeline:
         # Update state
         self.state.photometry_results = photometry_results
         self.state.csv_path = csv_path
-        self.state.stage = 'visualization'
-        self.mark_stage_complete('processing')
+        self.state.stage = "visualization"
+        self.mark_stage_complete("processing")
         self.save_state()
 
     def run_visualization(self) -> None:
         """Execute visualization stage."""
         # Check dependencies
-        self.check_dependencies('visualization')
+        self.check_dependencies("visualization")
 
         # Check if photometry results are available in memory
         if not self.state.photometry_results:
             # Try to load from saved lightcurve CSV
-            csv_path = self.results_dir / 'lightcurve.csv'
+            csv_path = self.results_dir / "lightcurve.csv"
             if csv_path.exists():
                 logger.info("Loading photometry results from saved lightcurve CSV")
                 self.state.photometry_results = load_lightcurve_from_csv(csv_path)
@@ -421,8 +397,8 @@ class SPXQueryPipeline:
 
         if not self.state.photometry_results:
             logger.warning("No photometry results available for visualization")
-            self.state.stage = 'complete'
-            self.mark_stage_complete('visualization')
+            self.state.stage = "complete"
+            self.mark_stage_complete("visualization")
             self.save_state()
             return
 
@@ -433,10 +409,7 @@ class SPXQueryPipeline:
         if self.config.bands is not None:
             # Only keep results for bands in config
             original_count = len(photometry_results)
-            photometry_results = [
-                r for r in photometry_results
-                if r.band in self.config.bands
-            ]
+            photometry_results = [r for r in photometry_results if r.band in self.config.bands]
             logger.info(
                 f"Filtered photometry results by bands {self.config.bands}: "
                 f"{original_count} -> {len(photometry_results)} measurements"
@@ -444,13 +417,13 @@ class SPXQueryPipeline:
 
             if not photometry_results:
                 logger.warning(f"No photometry results match configured bands {self.config.bands}")
-                self.state.stage = 'complete'
-                self.mark_stage_complete('visualization')
+                self.state.stage = "complete"
+                self.mark_stage_complete("visualization")
                 self.save_state()
                 return
 
         # Create combined plot with quality control filters
-        plot_path = self.results_dir / 'combined_plot.png'
+        plot_path = self.results_dir / "combined_plot.png"
         create_combined_plot(
             photometry_results,  # Use filtered results
             plot_path,
@@ -459,13 +432,13 @@ class SPXQueryPipeline:
             bad_flags=self.config.bad_flags,
             use_magnitude=self.config.use_magnitude,
             show_errorbars=self.config.show_errorbars,
-            visualization_config=self.config.advanced.visualization  # Pass advanced visualization config
+            visualization_config=self.config.advanced.visualization,  # Pass advanced visualization config
         )
 
         # Update state
         self.state.plot_path = plot_path
-        self.state.stage = 'complete'
-        self.mark_stage_complete('visualization')
+        self.state.stage = "complete"
+        self.mark_stage_complete("visualization")
         self.save_state()
 
         logger.info(f"Visualization saved to {plot_path}")
@@ -488,10 +461,7 @@ class SPXQueryPipeline:
         self.print_status()
 
         # Get remaining stages
-        remaining_stages = [
-            s for s in self.state.pipeline_stages
-            if s not in self.state.completed_stages
-        ]
+        remaining_stages = [s for s in self.state.pipeline_stages if s not in self.state.completed_stages]
 
         if not remaining_stages:
             logger.info("All stages already complete")
@@ -501,18 +471,18 @@ class SPXQueryPipeline:
 
         # Execute remaining stages
         for stage in remaining_stages:
-            if stage == 'query':
+            if stage == "query":
                 self.run_query()
-            elif stage == 'download':
+            elif stage == "download":
                 self.run_download(skip_existing=skip_existing_downloads)
-            elif stage == 'processing':
+            elif stage == "processing":
                 self.run_processing()
-            elif stage == 'visualization':
+            elif stage == "visualization":
                 self.run_visualization()
             else:
                 logger.warning(f"Unknown stage '{stage}', skipping")
 
-        self.state.stage = 'complete'
+        self.state.stage = "complete"
         self.save_state()
         logger.info("Resume complete")
 
@@ -536,7 +506,7 @@ def run_pipeline(
     show_errorbars: bool = True,
     skip_existing_downloads: bool = True,
     pipeline_stages: Optional[List[str]] = None,
-    advanced_params_file: Optional[Union[str, Path]] = None
+    advanced_params_file: Optional[Union[str, Path]] = None,
 ) -> None:
     """
     Convenience function to run the pipeline with sensible defaults.
@@ -614,7 +584,7 @@ def run_pipeline(
         bad_flags=bad_flags if bad_flags is not None else [0, 1, 2, 6, 7, 9, 10, 11, 15],
         use_magnitude=use_magnitude,
         show_errorbars=show_errorbars,
-        advanced_params_file=advanced_params_file  # Pass advanced params file
+        advanced_params_file=advanced_params_file,  # Pass advanced params file
     )
 
     # Create and run pipeline

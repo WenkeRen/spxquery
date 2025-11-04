@@ -3,15 +3,17 @@ Tests for advanced parameter configuration system.
 """
 
 import json
-import pytest
 from pathlib import Path
+
+import pytest
+
 from spxquery.core.config import (
-    PhotometryConfig,
-    VisualizationConfig,
-    DownloadConfig,
     AdvancedConfig,
+    DownloadConfig,
+    PhotometryConfig,
     QueryConfig,
     Source,
+    VisualizationConfig,
 )
 from spxquery.utils.params import export_default_parameters, load_advanced_config
 
@@ -30,11 +32,7 @@ class TestPhotometryConfig:
 
     def test_custom_values(self):
         """Test creating config with custom values."""
-        config = PhotometryConfig(
-            annulus_inner_offset=2.0,
-            bg_sigma_clip_sigma=5.0,
-            pixel_scale_fallback=7.0
-        )
+        config = PhotometryConfig(annulus_inner_offset=2.0, bg_sigma_clip_sigma=5.0, pixel_scale_fallback=7.0)
         assert config.annulus_inner_offset == 2.0
         assert config.bg_sigma_clip_sigma == 5.0
         assert config.pixel_scale_fallback == 7.0
@@ -153,10 +151,7 @@ class TestAdvancedConfig:
         photo_config = PhotometryConfig(bg_sigma_clip_sigma=5.0)
         viz_config = VisualizationConfig(dpi=300)
 
-        config = AdvancedConfig(
-            photometry=photo_config,
-            visualization=viz_config
-        )
+        config = AdvancedConfig(photometry=photo_config, visualization=viz_config)
 
         assert config.photometry.bg_sigma_clip_sigma == 5.0
         assert config.visualization.dpi == 300
@@ -329,11 +324,7 @@ class TestQueryConfigIntegration:
 
         # Create QueryConfig with params file
         source = Source(ra=100.0, dec=20.0, name="TestSource")
-        query_config = QueryConfig(
-            source=source,
-            output_dir=tmp_path / "output",
-            advanced_params_file=params_file
-        )
+        query_config = QueryConfig(source=source, output_dir=tmp_path / "output", advanced_params_file=params_file)
 
         # Verify advanced params were loaded
         assert query_config.advanced.photometry.bg_sigma_clip_sigma == 7.0
@@ -341,10 +332,7 @@ class TestQueryConfigIntegration:
     def test_query_config_with_defaults(self, tmp_path):
         """Test QueryConfig uses defaults when no param file provided."""
         source = Source(ra=100.0, dec=20.0, name="TestSource")
-        query_config = QueryConfig(
-            source=source,
-            output_dir=tmp_path / "output"
-        )
+        query_config = QueryConfig(source=source, output_dir=tmp_path / "output")
 
         # Should use defaults
         assert isinstance(query_config.advanced, AdvancedConfig)
@@ -356,7 +344,5 @@ class TestQueryConfigIntegration:
 
         with pytest.raises(FileNotFoundError):
             QueryConfig(
-                source=source,
-                output_dir=tmp_path / "output",
-                advanced_params_file=tmp_path / "nonexistent.json"
+                source=source, output_dir=tmp_path / "output", advanced_params_file=tmp_path / "nonexistent.json"
             )

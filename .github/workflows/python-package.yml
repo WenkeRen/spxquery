@@ -43,20 +43,12 @@ jobs:
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
       run: poetry install --no-interaction --with dev
 
-    - name: Code formatting check (Black)
+    - name: Code formatting and linting check (Ruff)
       run: |
-        poetry run black --check .
-
-    - name: Import sorting check (isort)
-      run: |
-        poetry run isort --check-only .
-
-    - name: Lint with flake8
-      run: |
-        # stop the build if there are Python syntax errors or undefined names
-        poetry run flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings. Line length set to 100 per pyproject.toml
-        poetry run flake8 . --count --exit-zero --max-complexity=10 --max-line-length=100 --statistics
+        # Check code formatting
+        poetry run ruff format --check .
+        # Run linter (includes import sorting, pycodestyle, pyflakes)
+        poetry run ruff check .
 
     - name: Type checking with mypy
       run: |

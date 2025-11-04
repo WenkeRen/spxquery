@@ -2,12 +2,12 @@
 Configuration and data models for SPXQuery package.
 """
 
-from dataclasses import dataclass, field, asdict
-from pathlib import Path
-from typing import Optional, List, Dict, Any, Tuple
-from datetime import datetime
 import json
 import logging
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from .. import __version__
 
@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Source:
     """Astronomical source coordinates."""
+
     ra: float  # Right ascension in degrees
     dec: float  # Declination in degrees
     name: Optional[str] = None
@@ -69,6 +70,7 @@ class PhotometryConfig:
         Step size in pixels when expanding annulus.
         Default: 0.5. Usually 0.3-1.0 is reasonable.
     """
+
     annulus_inner_offset: float = 1.414
     min_annulus_area: int = 10
     max_outer_radius: float = 5.0
@@ -96,7 +98,7 @@ class PhotometryConfig:
         if self.bg_sigma_clip_maxiters <= 0:
             raise ValueError(f"bg_sigma_clip_maxiters must be > 0, got {self.bg_sigma_clip_maxiters}")
         if self.zodi_scale_max <= self.zodi_scale_min:
-            raise ValueError(f"zodi_scale_max must be > zodi_scale_min")
+            raise ValueError("zodi_scale_max must be > zodi_scale_min")
         if self.pixel_scale_fallback <= 0:
             raise ValueError(f"pixel_scale_fallback must be > 0, got {self.pixel_scale_fallback}")
 
@@ -105,7 +107,7 @@ class PhotometryConfig:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PhotometryConfig':
+    def from_dict(cls, data: Dict[str, Any]) -> "PhotometryConfig":
         """Create from dictionary."""
         # Only use keys that exist in the dataclass
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
@@ -166,6 +168,7 @@ class VisualizationConfig:
         Resolution in dots per inch for saved figures.
         Default: 150. Use 300 for print publications.
     """
+
     wavelength_cmap: str = "rainbow"
     date_cmap: str = "viridis"
     sigma_clip_sigma: float = 3.0
@@ -186,6 +189,7 @@ class VisualizationConfig:
         """Validate parameters."""
         # Validate colormaps
         import matplotlib.cm as cm
+
         try:
             cm.get_cmap(self.wavelength_cmap)
         except ValueError:
@@ -201,7 +205,7 @@ class VisualizationConfig:
         if not 0 <= self.ylim_percentile_max <= 100:
             raise ValueError(f"ylim_percentile_max must be 0-100, got {self.ylim_percentile_max}")
         if self.ylim_percentile_min >= self.ylim_percentile_max:
-            raise ValueError(f"ylim_percentile_min must be < ylim_percentile_max")
+            raise ValueError("ylim_percentile_min must be < ylim_percentile_max")
         if not 0 <= self.errorbar_alpha <= 1:
             raise ValueError(f"errorbar_alpha must be 0-1, got {self.errorbar_alpha}")
         if not 0 <= self.marker_alpha <= 1:
@@ -213,16 +217,16 @@ class VisualizationConfig:
         """Convert to dictionary for serialization."""
         data = asdict(self)
         # Convert tuple to list for JSON serialization
-        if isinstance(data['figsize'], tuple):
-            data['figsize'] = list(data['figsize'])
+        if isinstance(data["figsize"], tuple):
+            data["figsize"] = list(data["figsize"])
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'VisualizationConfig':
+    def from_dict(cls, data: Dict[str, Any]) -> "VisualizationConfig":
         """Create from dictionary."""
         # Convert figsize list back to tuple
-        if 'figsize' in data and isinstance(data['figsize'], list):
-            data['figsize'] = tuple(data['figsize'])
+        if "figsize" in data and isinstance(data["figsize"], list):
+            data["figsize"] = tuple(data["figsize"])
         # Only use keys that exist in the dataclass
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
@@ -252,6 +256,7 @@ class DownloadConfig:
         User agent string for HTTP requests.
         Default: "SPXQuery/<version>". Usually no need to change.
     """
+
     chunk_size: int = 8192
     timeout: int = 300
     max_retries: int = 3
@@ -274,7 +279,7 @@ class DownloadConfig:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'DownloadConfig':
+    def from_dict(cls, data: Dict[str, Any]) -> "DownloadConfig":
         """Create from dictionary."""
         valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
@@ -289,6 +294,7 @@ class AdvancedConfig:
     This class groups all advanced configuration objects together
     for easier management and serialization.
     """
+
     photometry: PhotometryConfig = field(default_factory=PhotometryConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
     download: DownloadConfig = field(default_factory=DownloadConfig)
@@ -296,31 +302,31 @@ class AdvancedConfig:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
-            'photometry': self.photometry.to_dict(),
-            'visualization': self.visualization.to_dict(),
-            'download': self.download.to_dict()
+            "photometry": self.photometry.to_dict(),
+            "visualization": self.visualization.to_dict(),
+            "download": self.download.to_dict(),
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'AdvancedConfig':
+    def from_dict(cls, data: Dict[str, Any]) -> "AdvancedConfig":
         """Create from dictionary."""
         return cls(
-            photometry=PhotometryConfig.from_dict(data.get('photometry', {})),
-            visualization=VisualizationConfig.from_dict(data.get('visualization', {})),
-            download=DownloadConfig.from_dict(data.get('download', {}))
+            photometry=PhotometryConfig.from_dict(data.get("photometry", {})),
+            visualization=VisualizationConfig.from_dict(data.get("visualization", {})),
+            download=DownloadConfig.from_dict(data.get("download", {})),
         )
 
     def to_json_file(self, filepath: Path) -> None:
         """Save to JSON file."""
         filepath = Path(filepath)
         filepath.parent.mkdir(parents=True, exist_ok=True)
-        with open(filepath, 'w') as f:
+        with open(filepath, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
 
     @classmethod
-    def from_json_file(cls, filepath: Path) -> 'AdvancedConfig':
+    def from_json_file(cls, filepath: Path) -> "AdvancedConfig":
         """Load from JSON file."""
-        with open(filepath, 'r') as f:
+        with open(filepath, "r") as f:
             data = json.load(f)
         return cls.from_dict(data)
 
@@ -333,6 +339,7 @@ class QueryConfig:
     Smart loading: If a saved state file exists for the source, parameters are loaded
     with priority: user-provided > saved state > defaults.
     """
+
     source: Source
     output_dir: Path = field(default_factory=Path.cwd)
     bands: Optional[List[str]] = None  # e.g., ['D1', 'D2', 'D3', 'D4', 'D5', 'D6']
@@ -357,12 +364,13 @@ class QueryConfig:
         # Load advanced parameters from file if provided
         if self.advanced_params_file is not None:
             from ..utils.params import load_advanced_config
+
             self.advanced_params_file = Path(self.advanced_params_file)
             self.advanced = load_advanced_config(self.advanced_params_file)
             logger.info(f"Loaded advanced parameters from {self.advanced_params_file}")
 
         # Validate bands
-        valid_bands = ['D1', 'D2', 'D3', 'D4', 'D5', 'D6']
+        valid_bands = ["D1", "D2", "D3", "D4", "D5", "D6"]
         if self.bands:
             invalid = set(self.bands) - set(valid_bands)
             if invalid:
@@ -375,22 +383,28 @@ class QueryConfig:
         # Validate cutout parameters
         if self.cutout_size:
             from ..utils.helpers import validate_cutout_size
+
             if not validate_cutout_size(self.cutout_size):
-                raise ValueError(f"Invalid cutout_size format: '{self.cutout_size}'. "
-                               "Expected format: <value>[,<value>][units], e.g., '200px', '3arcmin', '0.1'")
+                raise ValueError(
+                    f"Invalid cutout_size format: '{self.cutout_size}'. "
+                    "Expected format: <value>[,<value>][units], e.g., '200px', '3arcmin', '0.1'"
+                )
 
         if self.cutout_center:
             from ..utils.helpers import validate_cutout_center
+
             if not validate_cutout_center(self.cutout_center):
-                raise ValueError(f"Invalid cutout_center format: '{self.cutout_center}'. "
-                               "Expected format: <x>,<y>[units], e.g., '70,20', '300.5,120px'")
+                raise ValueError(
+                    f"Invalid cutout_center format: '{self.cutout_center}'. "
+                    "Expected format: <x>,<y>[units], e.g., '70,20', '300.5,120px'"
+                )
 
         # Validate quality control parameters
         if self.sigma_threshold <= 0:
             raise ValueError(f"Sigma threshold must be positive, got {self.sigma_threshold}")
 
     @classmethod
-    def from_saved_state(cls, source_name: str, output_dir: Path, **user_overrides) -> 'QueryConfig':
+    def from_saved_state(cls, source_name: str, output_dir: Path, **user_overrides) -> "QueryConfig":
         """
         Create QueryConfig by loading from saved state with optional overrides.
 
@@ -428,50 +442,49 @@ class QueryConfig:
 
         if not state_file.exists():
             # No saved state - create from scratch with user overrides
-            source = Source(
-                ra=user_overrides.get('ra', 0.0),
-                dec=user_overrides.get('dec', 0.0),
-                name=source_name
-            )
+            source = Source(ra=user_overrides.get("ra", 0.0), dec=user_overrides.get("dec", 0.0), name=source_name)
             # Remove ra/dec from overrides since they're in source
-            user_overrides.pop('ra', None)
-            user_overrides.pop('dec', None)
+            user_overrides.pop("ra", None)
+            user_overrides.pop("dec", None)
 
             return cls(source=source, output_dir=output_dir, **user_overrides)
 
         # Load saved state
         saved_data = load_json(state_file)
-        saved_config = saved_data.get('config', {})
+        saved_config = saved_data.get("config", {})
 
         # Create source from saved or user data
-        if 'source' in saved_config:
+        if "source" in saved_config:
             source = Source(
-                ra=user_overrides.get('ra', saved_config['source']['ra']),
-                dec=user_overrides.get('dec', saved_config['source']['dec']),
-                name=source_name
+                ra=user_overrides.get("ra", saved_config["source"]["ra"]),
+                dec=user_overrides.get("dec", saved_config["source"]["dec"]),
+                name=source_name,
             )
         else:
-            source = Source(
-                ra=user_overrides.get('ra', 0.0),
-                dec=user_overrides.get('dec', 0.0),
-                name=source_name
-            )
+            source = Source(ra=user_overrides.get("ra", 0.0), dec=user_overrides.get("dec", 0.0), name=source_name)
 
         # Remove ra/dec from overrides
-        user_overrides.pop('ra', None)
-        user_overrides.pop('dec', None)
+        user_overrides.pop("ra", None)
+        user_overrides.pop("dec", None)
 
         # Build kwargs with priority: user > saved > defaults
         kwargs = {
-            'source': source,
-            'output_dir': output_dir,
+            "source": source,
+            "output_dir": output_dir,
         }
 
         # For each parameter, use: user_overrides > saved_config > class default
         param_names = [
-            'bands', 'aperture_diameter', 'max_download_workers', 'max_processing_workers',
-            'cutout_size', 'cutout_center', 'sigma_threshold', 'bad_flags',
-            'use_magnitude', 'show_errorbars'
+            "bands",
+            "aperture_diameter",
+            "max_download_workers",
+            "max_processing_workers",
+            "cutout_size",
+            "cutout_center",
+            "sigma_threshold",
+            "bad_flags",
+            "use_magnitude",
+            "show_errorbars",
         ]
 
         for param in param_names:
@@ -491,6 +504,7 @@ class QueryConfig:
 @dataclass
 class ObservationInfo:
     """Information about a single SPHEREx observation."""
+
     obs_id: str
     band: str
     mjd: float
@@ -514,17 +528,18 @@ class ObservationInfo:
 @dataclass
 class QueryResults:
     """Results from SPHEREx archive query."""
+
     observations: List[ObservationInfo]
     query_time: datetime
     source: Source
     total_size_gb: float
     time_span_days: float
     band_counts: Dict[str, int]
-    
+
     def __len__(self):
         return len(self.observations)
-    
-    def filter_by_band(self, bands: List[str]) -> 'QueryResults':
+
+    def filter_by_band(self, bands: List[str]) -> "QueryResults":
         """Return new QueryResults filtered by bands."""
         filtered_obs = [obs for obs in self.observations if obs.band in bands]
         return QueryResults(
@@ -533,14 +548,14 @@ class QueryResults:
             source=self.source,
             total_size_gb=0.0,  # File sizes unknown until download
             time_span_days=self.time_span_days,
-            band_counts={band: sum(1 for obs in filtered_obs if obs.band == band)
-                        for band in bands}
+            band_counts={band: sum(1 for obs in filtered_obs if obs.band == band) for band in bands},
         )
 
 
 @dataclass
 class PhotometryResult:
     """Result from aperture photometry on a single observation."""
+
     obs_id: str
     mjd: float
     flux: float  # microJansky (uJy)
@@ -563,6 +578,7 @@ class PhotometryResult:
 @dataclass
 class DownloadResult:
     """Result from file download attempt."""
+
     url: str
     local_path: Path
     success: bool
@@ -573,6 +589,7 @@ class DownloadResult:
 @dataclass
 class PipelineState:
     """State for resumable pipeline execution."""
+
     stage: str  # Current stage: 'query', 'download', 'processing', 'visualization', 'complete'
     config: QueryConfig
     query_results: Optional[QueryResults] = None
@@ -581,123 +598,123 @@ class PipelineState:
     csv_path: Optional[Path] = None
     plot_path: Optional[Path] = None
     completed_stages: List[str] = field(default_factory=list)  # Track completed stages
-    pipeline_stages: List[str] = field(default_factory=lambda: ['query', 'download', 'processing', 'visualization'])  # Configurable stages
-    
+    pipeline_stages: List[str] = field(
+        default_factory=lambda: ["query", "download", "processing", "visualization"]
+    )  # Configurable stages
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
-            'stage': self.stage,
-            'completed_stages': self.completed_stages,
-            'pipeline_stages': self.pipeline_stages,
-            'config': {
-                'source': {
-                    'ra': self.config.source.ra,
-                    'dec': self.config.source.dec,
-                    'name': self.config.source.name
-                },
-                'output_dir': str(self.config.output_dir),
-                'bands': self.config.bands,
-                'aperture_diameter': self.config.aperture_diameter,
-                'max_download_workers': self.config.max_download_workers,
-                'max_processing_workers': self.config.max_processing_workers,
-                'cutout_size': self.config.cutout_size,
-                'cutout_center': self.config.cutout_center,
-                'sigma_threshold': self.config.sigma_threshold,
-                'bad_flags': self.config.bad_flags,
-                'use_magnitude': self.config.use_magnitude,
-                'show_errorbars': self.config.show_errorbars
+            "stage": self.stage,
+            "completed_stages": self.completed_stages,
+            "pipeline_stages": self.pipeline_stages,
+            "config": {
+                "source": {"ra": self.config.source.ra, "dec": self.config.source.dec, "name": self.config.source.name},
+                "output_dir": str(self.config.output_dir),
+                "bands": self.config.bands,
+                "aperture_diameter": self.config.aperture_diameter,
+                "max_download_workers": self.config.max_download_workers,
+                "max_processing_workers": self.config.max_processing_workers,
+                "cutout_size": self.config.cutout_size,
+                "cutout_center": self.config.cutout_center,
+                "sigma_threshold": self.config.sigma_threshold,
+                "bad_flags": self.config.bad_flags,
+                "use_magnitude": self.config.use_magnitude,
+                "show_errorbars": self.config.show_errorbars,
             },
-            'query_results': {
-                'observations': [
+            "query_results": {
+                "observations": [
                     {
-                        'obs_id': obs.obs_id,
-                        'band': obs.band,
-                        'mjd': obs.mjd,
-                        'wavelength_min': obs.wavelength_min,
-                        'wavelength_max': obs.wavelength_max,
-                        'download_url': obs.download_url,
-                        't_min': obs.t_min,
-                        't_max': obs.t_max
-                    } for obs in self.query_results.observations
-                ] if self.query_results else [],
-                'query_time': self.query_results.query_time.isoformat() if self.query_results else None,
-                'total_size_gb': self.query_results.total_size_gb if self.query_results else 0,
-                'time_span_days': self.query_results.time_span_days if self.query_results else 0,
-                'band_counts': self.query_results.band_counts if self.query_results else {}
-            } if self.query_results else None,
-            'downloaded_files': [str(p) for p in self.downloaded_files],
-            'photometry_results': [
+                        "obs_id": obs.obs_id,
+                        "band": obs.band,
+                        "mjd": obs.mjd,
+                        "wavelength_min": obs.wavelength_min,
+                        "wavelength_max": obs.wavelength_max,
+                        "download_url": obs.download_url,
+                        "t_min": obs.t_min,
+                        "t_max": obs.t_max,
+                    }
+                    for obs in self.query_results.observations
+                ]
+                if self.query_results
+                else [],
+                "query_time": self.query_results.query_time.isoformat() if self.query_results else None,
+                "total_size_gb": self.query_results.total_size_gb if self.query_results else 0,
+                "time_span_days": self.query_results.time_span_days if self.query_results else 0,
+                "band_counts": self.query_results.band_counts if self.query_results else {},
+            }
+            if self.query_results
+            else None,
+            "downloaded_files": [str(p) for p in self.downloaded_files],
+            "photometry_results": [
                 {
-                    'obs_id': pr.obs_id,
-                    'mjd': pr.mjd,
-                    'flux': pr.flux,
-                    'flux_error': pr.flux_error,
-                    'wavelength': pr.wavelength,
-                    'bandwidth': pr.bandwidth,
-                    'flag': pr.flag,
-                    'pix_x': pr.pix_x,
-                    'pix_y': pr.pix_y,
-                    'band': pr.band,
-                    'mag_ab': pr.mag_ab,
-                    'mag_ab_error': pr.mag_ab_error
-                } for pr in self.photometry_results
+                    "obs_id": pr.obs_id,
+                    "mjd": pr.mjd,
+                    "flux": pr.flux,
+                    "flux_error": pr.flux_error,
+                    "wavelength": pr.wavelength,
+                    "bandwidth": pr.bandwidth,
+                    "flag": pr.flag,
+                    "pix_x": pr.pix_x,
+                    "pix_y": pr.pix_y,
+                    "band": pr.band,
+                    "mag_ab": pr.mag_ab,
+                    "mag_ab_error": pr.mag_ab_error,
+                }
+                for pr in self.photometry_results
             ],
-            'csv_path': str(self.csv_path) if self.csv_path else None,
-            'plot_path': str(self.plot_path) if self.plot_path else None
+            "csv_path": str(self.csv_path) if self.csv_path else None,
+            "plot_path": str(self.plot_path) if self.plot_path else None,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PipelineState':
+    def from_dict(cls, data: Dict[str, Any]) -> "PipelineState":
         """Create from dictionary."""
         # Reconstruct config
         source = Source(
-            ra=data['config']['source']['ra'],
-            dec=data['config']['source']['dec'],
-            name=data['config']['source'].get('name')
+            ra=data["config"]["source"]["ra"],
+            dec=data["config"]["source"]["dec"],
+            name=data["config"]["source"].get("name"),
         )
         config = QueryConfig(
             source=source,
-            output_dir=Path(data['config']['output_dir']),
-            bands=data['config'].get('bands'),
-            aperture_diameter=data['config']['aperture_diameter'],
-            max_download_workers=data['config']['max_download_workers'],
-            max_processing_workers=data['config'].get('max_processing_workers', 10),
-            cutout_size=data['config'].get('cutout_size'),
-            cutout_center=data['config'].get('cutout_center'),
-            sigma_threshold=data['config'].get('sigma_threshold', 5.0),
-            bad_flags=data['config'].get('bad_flags', [0, 1, 2, 6, 7, 9, 10, 11, 15]),
-            use_magnitude=data['config'].get('use_magnitude', False),
-            show_errorbars=data['config'].get('show_errorbars', True)
+            output_dir=Path(data["config"]["output_dir"]),
+            bands=data["config"].get("bands"),
+            aperture_diameter=data["config"]["aperture_diameter"],
+            max_download_workers=data["config"]["max_download_workers"],
+            max_processing_workers=data["config"].get("max_processing_workers", 10),
+            cutout_size=data["config"].get("cutout_size"),
+            cutout_center=data["config"].get("cutout_center"),
+            sigma_threshold=data["config"].get("sigma_threshold", 5.0),
+            bad_flags=data["config"].get("bad_flags", [0, 1, 2, 6, 7, 9, 10, 11, 15]),
+            use_magnitude=data["config"].get("use_magnitude", False),
+            show_errorbars=data["config"].get("show_errorbars", True),
         )
-        
+
         # Reconstruct query results
         query_results = None
-        if data.get('query_results'):
-            observations = [
-                ObservationInfo(**obs) for obs in data['query_results']['observations']
-            ]
+        if data.get("query_results"):
+            observations = [ObservationInfo(**obs) for obs in data["query_results"]["observations"]]
             query_results = QueryResults(
                 observations=observations,
-                query_time=datetime.fromisoformat(data['query_results']['query_time']),
+                query_time=datetime.fromisoformat(data["query_results"]["query_time"]),
                 source=source,
-                total_size_gb=data['query_results']['total_size_gb'],
-                time_span_days=data['query_results']['time_span_days'],
-                band_counts=data['query_results']['band_counts']
+                total_size_gb=data["query_results"]["total_size_gb"],
+                time_span_days=data["query_results"]["time_span_days"],
+                band_counts=data["query_results"]["band_counts"],
             )
-        
+
         # Reconstruct photometry results
-        photometry_results = [
-            PhotometryResult(**pr) for pr in data.get('photometry_results', [])
-        ]
-        
+        photometry_results = [PhotometryResult(**pr) for pr in data.get("photometry_results", [])]
+
         return cls(
-            stage=data['stage'],
+            stage=data["stage"],
             config=config,
             query_results=query_results,
-            downloaded_files=[Path(p) for p in data.get('downloaded_files', [])],
+            downloaded_files=[Path(p) for p in data.get("downloaded_files", [])],
             photometry_results=photometry_results,
-            csv_path=Path(data['csv_path']) if data.get('csv_path') else None,
-            plot_path=Path(data['plot_path']) if data.get('plot_path') else None,
-            completed_stages=data.get('completed_stages', []),
-            pipeline_stages=data.get('pipeline_stages', ['query', 'download', 'processing', 'visualization'])
+            csv_path=Path(data["csv_path"]) if data.get("csv_path") else None,
+            plot_path=Path(data["plot_path"]) if data.get("plot_path") else None,
+            completed_stages=data.get("completed_stages", []),
+            pipeline_stages=data.get("pipeline_stages", ["query", "download", "processing", "visualization"]),
         )

@@ -3,10 +3,10 @@ SPXQuery: A package for SPHEREx spectral image data query and time-domain analys
 """
 
 try:
-    from importlib.metadata import version, PackageNotFoundError
+    from importlib.metadata import PackageNotFoundError, version
 except ImportError:
     # For Python < 3.8
-    from importlib_metadata import version, PackageNotFoundError
+    from importlib_metadata import PackageNotFoundError, version
 
 try:
     __version__ = version("spxquery")
@@ -16,7 +16,7 @@ except PackageNotFoundError:
 
 __author__ = "SPXQuery Team"
 
-from .core.config import Source, QueryConfig
+from .core.config import QueryConfig, Source
 from .core.pipeline import SPXQueryPipeline
 
 __all__ = ["Source", "QueryConfig", "SPXQueryPipeline"]

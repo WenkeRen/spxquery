@@ -4,16 +4,16 @@ Visualization functions for SPHEREx time-domain data.
 
 import logging
 from pathlib import Path
-from typing import List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
 import numpy as np
 import numpy.ma as ma
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-from matplotlib.figure import Figure
-from matplotlib.axes import Axes
-from matplotlib.colors import Normalize, to_rgba
 from astropy.stats import sigma_clip
+from matplotlib.axes import Axes
+from matplotlib.colors import Normalize
+from matplotlib.figure import Figure
 
 from ..core.config import PhotometryResult
 
@@ -184,11 +184,12 @@ def create_spectrum_plot(
     # Classify points by quality
     if apply_quality_filters and bad_flags_mask is not None:
         from ..utils.helpers import classify_photometry_by_quality
+
         classified = classify_photometry_by_quality(
             photometry_results,
             sigma_threshold=sigma_threshold,
             bad_flags_mask=bad_flags_mask,
-            separate_upper_limits=True
+            separate_upper_limits=True,
         )
         good_regular = classified.good_regular
         rejected_regular = classified.rejected_regular
@@ -449,11 +450,12 @@ def create_lightcurve_plot(
     # Classify points by quality
     if apply_quality_filters and bad_flags_mask is not None:
         from ..utils.helpers import classify_photometry_by_quality
+
         classified = classify_photometry_by_quality(
             photometry_results,
             sigma_threshold=sigma_threshold,
             bad_flags_mask=bad_flags_mask,
-            separate_upper_limits=False  # Light curve doesn't separate upper limits
+            separate_upper_limits=False,  # Light curve doesn't separate upper limits
         )
         # Combine all good points (regular + upper limits if any)
         good_points = classified.good_regular
@@ -637,7 +639,7 @@ def create_combined_plot(
     bad_flags: Optional[List[int]] = None,
     use_magnitude: bool = False,
     show_errorbars: bool = True,
-    visualization_config: Optional['VisualizationConfig'] = None
+    visualization_config: Optional["VisualizationConfig"] = None,
 ) -> Figure:
     """
     Create combined plot with spectrum and light curve.
@@ -696,7 +698,7 @@ def create_combined_plot(
     # Create flag mask if quality filtering is requested
     bad_flags_mask = None
     if apply_quality_filters:
-        from ..utils.helpers import create_flag_mask, check_flag_bits
+        from ..utils.helpers import check_flag_bits, create_flag_mask
 
         if bad_flags is None:
             bad_flags = [0, 1, 2, 6, 7, 9, 10, 11, 15]
@@ -715,8 +717,10 @@ def create_combined_plot(
             else:
                 good_count += 1
 
-        logger.info(f"Quality filtering: {len(photometry_results)} total points "
-                   f"({good_count} good, {rejected_count} rejected - shown as crosses)")
+        logger.info(
+            f"Quality filtering: {len(photometry_results)} total points "
+            f"({good_count} good, {rejected_count} rejected - shown as crosses)"
+        )
 
     # Create figure with two subplots using constrained layout to handle colorbars
     fig, (ax1, ax2) = plt.subplots(
