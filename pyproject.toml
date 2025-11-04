@@ -39,32 +39,32 @@ packages = [
 
 [tool.poetry.dependencies]
 python = "^3.11"
-numpy = ">=1.23"
-astropy = ">=5.0"
-matplotlib = ">=3.6"
-pyvo = ">=1.4"
-tqdm = ">=4.64"
-photutils = ">=1.6"
-pandas = ">=1.5"
-scipy = ">=1.9"
+numpy = ">=1.26.0,<3.0.0"
+astropy = "^7.0"
+matplotlib = "^3.9"
+pyvo = "^1.6"
+tqdm = "^4.64"
+photutils = "^2.0"
+pandas = "^2.0"
+scipy = "^1.12"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^7.0"
-pytest-cov = "^3.0"
-black = "^22.0"
-flake8 = "^4.0"
-isort = "^5.0"
+pytest = "^8.4.2"
+pytest-cov = "^7.0.0"
+black = "^25.9.0"
+flake8 = "^7.3.0"
+isort = "^7.0.0"
 mypy = "^1.0"
 
 [tool.poetry.group.docs.dependencies]
-sphinx = "^4.0"
-sphinx-rtd-theme = "^1.0"
+sphinx = "^8.2.3"
+sphinx-rtd-theme = "^3.0"
 nbsphinx = "^0.8"
 
 [tool.poetry.group.notebooks.dependencies]
 jupyter = "^1.0"
-ipython = "^8.0"
-notebook = "^6.4"
+ipython = "^9.6.0"
+notebook = "^7.4.7"
 
 [tool.poetry.scripts]
 spxquery = "spxquery.core.pipeline:run_pipeline"
