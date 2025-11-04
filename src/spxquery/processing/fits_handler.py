@@ -7,14 +7,14 @@ import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple, Optional, Dict, Any
+from typing import Dict, Optional, Tuple
 
+import astropy.units as u
 import numpy as np
 from astropy import log as astropy_log
+from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.wcs import WCS
-from astropy.coordinates import SkyCoord
-import astropy.units as u
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +35,8 @@ def suppress_astropy_info():
         # Suppress specific FITSFixedWarning about redundant SCAMP distortion parameters
         with warnings.catch_warnings():
             # Catch the warning by message pattern, regardless of category
-            warnings.filterwarnings(
-                'ignore',
-                message='.*Removed redundant SCAMP distortion parameters.*'
-            )
-            warnings.filterwarnings(
-                'ignore',
-                message='.*because SIP parameters are also present.*'
-            )
+            warnings.filterwarnings("ignore", message=".*Removed redundant SCAMP distortion parameters.*")
+            warnings.filterwarnings("ignore", message=".*because SIP parameters are also present.*")
             yield
     finally:
         astropy_log.setLevel(original_level)
@@ -254,7 +248,9 @@ def get_pixel_scale_at_position(wcs: WCS, x: float, y: float, pixel_scale_fallba
         return pixel_scale_arcsec
 
     except Exception as e:
-        logger.warning(f"Failed to calculate pixel scale from WCS: {e}. Using fallback {pixel_scale_fallback} arcsec/pixel")
+        logger.warning(
+            f"Failed to calculate pixel scale from WCS: {e}. Using fallback {pixel_scale_fallback} arcsec/pixel"
+        )
         return pixel_scale_fallback  # Fallback to configured pixel scale
 
 
@@ -322,8 +318,8 @@ def create_background_mask(flags: np.ndarray) -> np.ndarray:
     """
     Create mask for background pixels (good for zodiacal matching).
 
-    Masks out pixels with problematic flags including sources,
-    non-functional pixels, outliers, etc.
+    Masks out pixels with problematic flags including non-functional pixels, outliers, etc., but keeps SOURCE-flagged
+    pixels as valid background pixels for local background estimation.
 
     Parameters
     ----------
@@ -337,8 +333,9 @@ def create_background_mask(flags: np.ndarray) -> np.ndarray:
     """
     # Define flags that should be masked out for background estimation
     # Based on SPHEREx flag definitions
+    # NOTE: SOURCE (bit 21) is intentionally EXCLUDED from this list
+    # to allow source pixels to be used in local background annuli
     bad_flags = {
-        "SOURCE": 21,  # Known source pixels
         "TRANSIENT": 0,  # Transient detections
         "OVERFLOW": 1,  # Overflow pixels
         "SUR_ERROR": 2,  # Processing errors
@@ -363,7 +360,7 @@ def create_background_mask(flags: np.ndarray) -> np.ndarray:
 
     n_good = np.sum(mask)
     n_total = mask.size
-    logger.info(f"Background mask: {n_good}/{n_total} ({n_good/n_total*100:.1f}%) pixels available")
+    logger.info(f"Background mask: {n_good}/{n_total} ({n_good / n_total * 100:.1f}%) pixels available")
 
     return mask
 
@@ -440,7 +437,7 @@ def subtract_zodiacal_background(
     flags: np.ndarray,
     variance: Optional[np.ndarray] = None,
     zodi_scale_min: float = 0.0,
-    zodi_scale_max: float = 10.0
+    zodi_scale_max: float = 10.0,
 ) -> Tuple[np.ndarray, float]:
     """
     Subtract zodiacal light background from image with amplitude scaling.
@@ -478,7 +475,9 @@ def subtract_zodiacal_background(
 
     # Validate scale factor
     if scale_factor <= zodi_scale_min or scale_factor > zodi_scale_max:
-        logger.warning(f"Unusual scaling factor {scale_factor:.4f} (outside [{zodi_scale_min}, {zodi_scale_max}]) - using 1.0")
+        logger.warning(
+            f"Unusual scaling factor {scale_factor:.4f} (outside [{zodi_scale_min}, {zodi_scale_max}]) - using 1.0"
+        )
         scale_factor = 1.0
 
     # Apply scaled subtraction
