@@ -19,17 +19,11 @@ SPXQuery is a Python package designed to automate SPHEREx spectral image data qu
 
 ## Installation
 
-### PyPI Installation (Coming Soon)
+### Requirements
 
-SPXQuery will soon be available on PyPI:
+- Python 3.11 or later (supports Python 3.11-3.13)
 
-```bash
-pip install spxquery
-```
-
-**Note**: This installation method is not yet available. Please use manual installation below.
-
-### Manual Installation
+### Installation from Source
 
 ```bash
 git clone https://github.com/WenkeRen/spxquery.git
@@ -41,6 +35,26 @@ Verify installation:
 
 ```bash
 python -c "import spxquery; print(spxquery.__version__)"
+```
+
+### For Developers (Optional)
+
+If you want to contribute to SPXQuery or manage dependencies with Poetry:
+
+```bash
+# Install Poetry
+curl -sSL https://install.python-poetry.org | python3 -
+
+# Install with Poetry
+poetry install
+```
+
+### PyPI Installation (Coming Soon)
+
+SPXQuery will be available on PyPI in the future:
+
+```bash
+pip install spxquery
 ```
 
 For detailed installation instructions and troubleshooting, see [INSTALL.md](INSTALL.md).
