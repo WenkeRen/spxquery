@@ -53,18 +53,14 @@ Basic usage:
 
 This will query IRSA, download cutout images, perform photometry, and generate light curve plots.
 
-Documentation Contents
-----------------------
+Links
+-----
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
+- `GitHub Repository <https://github.com/wenke-astro/spxquery>`_
+- `PyPI Package <https://pypi.org/project/spxquery/>`_
 
-   installation
-   quickstart
-   user_guide/index
-   api/index
-   contributing
+.. note::
+   Full documentation is under development. Additional sections (API reference, user guide, tutorials) will be added soon.
 
 Indices and tables
 ==================
