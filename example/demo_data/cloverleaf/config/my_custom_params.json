@@ -37,6 +37,6 @@
     "timeout": 300,
     "max_retries": 3,
     "retry_delay": 5,
-    "user_agent": "SPXQuery/0.1.0"
+    "user_agent": "SPXQuery/0.2.0"
   }
 }
