@@ -50,16 +50,28 @@ pipeline.run_full_pipeline()
 
 This will query IRSA, download cutout images, perform photometry, and generate light curve plots.
 
+## Documentation
+
+```{toctree}
+:maxdepth: 2
+:caption: Tutorial
+
+tutorials/quickstart_demo
+```
+
+```{toctree}
+:maxdepth: 2
+:caption: API Reference
+
+api/index
+```
+
 ## Links
 
 - [GitHub Repository](https://github.com/wenke-astro/spxquery)
 - [PyPI Package](https://pypi.org/project/spxquery/)
 
-```{note}
-Full documentation is under development. Additional sections (API reference, user guide, tutorials) will be added soon.
-```
-
-## Indices and tables
+## Indices and Tables
 
 * {ref}`genindex`
 * {ref}`modindex`
