@@ -6,7 +6,7 @@ SPXQuery is a Python package designed to automate SPHEREx spectral image data qu
 
 ## Example Output
 
-![SPHEREx Light Curve](example/demo_data/cloverleaf/results/combined_plot.png)
+![SPHEREx Light Curve](https://raw.githubusercontent.com/WenkeRen/spxquery/main/example/demo_data/cloverleaf/results/combined_plot.png)
 
 *Automated spectral and temporal analysis of the Cloverleaf quasar (z=2.56) showing SPHEREx's multi-wavelength time-domain capabilities.*
 
@@ -25,18 +25,26 @@ SPXQuery is a Python package designed to automate SPHEREx spectral image data qu
 
 - Python 3.11 or later (supports Python 3.11-3.13)
 
-### Installation from Source
+### Install from PyPI (Recommended)
 
 ```bash
-git clone https://github.com/WenkeRen/spxquery.git
-cd spxquery
-pip install .
+pip install spxquery
 ```
 
 Verify installation:
 
 ```bash
 python -c "import spxquery; print(spxquery.__version__)"
+```
+
+### Installation from Source
+
+For the latest development version:
+
+```bash
+git clone https://github.com/WenkeRen/spxquery.git
+cd spxquery
+pip install .
 ```
 
 ### For Developers (Optional)
@@ -49,14 +57,6 @@ curl -sSL https://install.python-poetry.org | python3 -
 
 # Install with Poetry
 poetry install
-```
-
-### PyPI Installation (Coming Soon)
-
-SPXQuery will be available on PyPI in the future:
-
-```bash
-pip install spxquery
 ```
 
 For detailed installation instructions and troubleshooting, see [INSTALL.md](INSTALL.md).
