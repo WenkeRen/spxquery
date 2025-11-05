@@ -13,7 +13,7 @@ SPHEREx (NASA Astrophysics Medium Explorer) obtains 0.75-5 μm spectroscopy acro
 ## Features
 
 - **Automated TAP queries** to IRSA SPHEREx archive
-- **Image cutout support** for 99% storage reduction (200px cutout vs full 2040×2040 image)
+- **Image cutout support** for storage reduction (e.g., 200px cutout vs full 2040×2040 image)
 - **Parallel downloads** with progress tracking and resumable pipeline
 - **Aperture photometry** with configurable parameters and background estimation
 - **Quality control** with SNR thresholds and pixel flag filtering
