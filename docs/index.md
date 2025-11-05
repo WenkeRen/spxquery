@@ -61,6 +61,16 @@ tutorials/quickstart_demo
 
 ```{toctree}
 :maxdepth: 2
+:caption: User Guide
+
+user_guide/pipeline
+user_guide/parameters
+user_guide/cutouts
+user_guide/quality_control
+```
+
+```{toctree}
+:maxdepth: 2
 :caption: API Reference
 
 api/index
