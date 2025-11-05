@@ -1,5 +1,7 @@
 # SPXQuery - SPHEREx Time-Domain Analysis Package
 
+[![Documentation Status](https://readthedocs.org/projects/spxquery/badge/?version=latest)](https://spxquery.readthedocs.io/en/latest/?badge=latest)
+
 SPXQuery is a Python package designed to automate SPHEREx spectral image data query, download, and time-domain analysis for astronomical sources.
 
 ## Example Output

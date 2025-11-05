@@ -28,6 +28,7 @@ except ImportError:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
+    'myst_parser',  # Markdown support
     'sphinx.ext.autodoc',
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
@@ -88,3 +89,18 @@ intersphinx_mapping = {
 # nbsphinx settings
 nbsphinx_execute = 'never'  # Don't execute notebooks during build
 nbsphinx_allow_errors = True
+
+# MyST parser settings
+myst_enable_extensions = [
+    "colon_fence",      # ::: fences for directives
+    "deflist",          # Definition lists
+    "fieldlist",        # Field lists
+    "html_image",       # Raw HTML images
+    "replacements",     # Text replacements
+    "smartquotes",      # Smart quotes
+    "tasklist",         # Task lists
+]
+source_suffix = {
+    '.rst': 'restructuredtext',
+    '.md': 'markdown',
+}
