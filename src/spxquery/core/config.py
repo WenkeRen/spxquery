@@ -287,6 +287,255 @@ class DownloadConfig:
 
 
 @dataclass
+class ModelPhotometryConfig:
+    """
+    Configuration for pysersic model-based photometry.
+
+    All parameters are exposed via custom_params.json for advanced users.
+    This follows the same philosophy as PhotometryConfig and VisualizationConfig.
+
+    Attributes
+    ----------
+    profile_type : str
+        Source profile model. Default: 'pointsource' (PRIMARY use case for undersampled SPHEREx data).
+        Options: 'pointsource', 'sersic', 'exp', 'dev', 'sersic_exp', 'doublesersic'
+    sky_type : str
+        Background model. Default: 'tilted-plane' (accounts for gradients).
+        Options: 'tilted-plane', 'flat', 'none'
+    inference_method : str
+        Bayesian inference method. Default: 'map' (fast).
+        Options: 'map', 'laplace', 'svi-mvn', 'svi-flow', 'nuts'
+    num_samples : int
+        Number of posterior samples for MCMC/SVI. Default: 1000.
+    num_warmup : int
+        Number of MCMC warmup steps. Default: 500.
+    num_chains : int
+        Number of MCMC chains. Default: 2.
+    target_accept_prob : float
+        NUTS target acceptance probability. Default: 0.8.
+    max_tree_depth : int
+        NUTS maximum tree depth. Default: 10.
+    svi_num_steps : int
+        Number of SVI optimization steps. Default: 10000.
+    svi_learning_rate : float
+        SVI learning rate. Default: 0.01.
+    use_aperture_prior : bool
+        Use aperture photometry as flux/position prior. Default: True.
+    allow_position_shift : bool
+        Allow center to move from input position. Default: True.
+    position_prior_sigma : float
+        Gaussian sigma for position prior (pixels). Default: 2.0.
+    flux_prior_scale_factor : float
+        Multiply aperture flux_err by this for prior width. Default: 3.0.
+    cutout_size : int
+        Size of cutout around source for fitting (pixels). Default: 50.
+        Applied during processing after FITS download. Square cutout: cutout_size x cutout_size.
+    psf_oversample : int
+        SPHEREx PSF oversampling factor. Default: 10.
+    psf_selection : str
+        PSF selection method. Default: 'nearest'.
+        Options: 'nearest' (find closest PSF), 'interpolate' (future), 'center' (testing only)
+    psf_downsample_method : str
+        PSF downsampling method. Default: 'rebin'.
+        Options: 'rebin' (block_reduce), 'interpolate' (scipy zoom)
+    loss_function : str
+        Loss function for fitting. Default: 'gaussian'.
+        Options: 'gaussian', 'student_t', 'gaussian_mixture'
+    student_t_df : int
+        Degrees of freedom for Student-t loss. Default: 5.
+    renderer : str
+        PSF rendering strategy. Default: 'hybrid'.
+        Options: 'hybrid', 'fourier', 'pixel'
+    hybrid_frac_start : float
+        HybridRenderer: smallest Gaussian fraction of r_eff. Default: 1e-2.
+    hybrid_frac_end : float
+        HybridRenderer: largest Gaussian fraction. Default: 15.0.
+    hybrid_n_sigma : int
+        HybridRenderer: number of Gaussian components. Default: 15.
+    hybrid_num_pixel_render : int
+        HybridRenderer: components to render in pixel space. Default: 3.
+    hybrid_precision : int
+        HybridRenderer: decomposition precision. Default: 10.
+    use_mpi : bool
+        Use MPI for parallelization (requires mpi4py). Default: False.
+    use_gpu : bool
+        Use GPU acceleration via JAX (requires jaxlib[cuda]). Default: False.
+    device_id : int
+        GPU device ID if use_gpu=True. Default: 0.
+    output_filename : str
+        Output CSV filename. Default: 'model_lightcurve.csv'.
+    save_model_params : bool
+        Save Sersic parameters to separate CSV. Default: True.
+    save_chains : bool
+        Deprecated: use save_posterior_chains. Default: False.
+    save_diagnostic_plots : bool
+        Save detailed plots for each source. Default: False.
+    plot_image : bool
+        Plot input image/mask/PSF (if diagnostics enabled). Default: True.
+    plot_residual : bool
+        Plot model residuals (if diagnostics enabled). Default: True.
+    plot_corner : bool
+        Corner plot for posterior (slow, MCMC/SVI only). Default: False.
+    diagnostic_plot_format : str
+        File format for diagnostic plots. Default: 'png'.
+        Options: 'png', 'pdf', 'jpg'
+    diagnostic_plot_dpi : int
+        DPI for saved figures. Default: 150.
+    save_posterior_chains : bool
+        Save full MCMC/SVI chains (use pysersic ASDF format). Default: False.
+        Chains saved to: diagnostics/chains/{band}/{filename}_chains.asdf
+    """
+
+    # Model specification
+    profile_type: str = "pointsource"
+    sky_type: str = "tilted-plane"
+
+    # Inference method
+    inference_method: str = "map"
+    num_samples: int = 1000
+    num_warmup: int = 500
+    num_chains: int = 2
+
+    # MCMC sampler parameters (advanced)
+    target_accept_prob: float = 0.8
+    max_tree_depth: int = 10
+
+    # SVI parameters (advanced)
+    svi_num_steps: int = 10000
+    svi_learning_rate: float = 0.01
+
+    # Prior configuration
+    use_aperture_prior: bool = True
+    allow_position_shift: bool = True
+    position_prior_sigma: float = 2.0
+    flux_prior_scale_factor: float = 3.0
+
+    # Cutout configuration
+    cutout_size: int = 50  # Size of cutout around source for fitting (pixels)
+
+    # PSF handling
+    psf_oversample: int = 10
+    psf_selection: str = "nearest"
+    psf_downsample_method: str = "rebin"
+
+    # Loss function
+    loss_function: str = "gaussian"
+    student_t_df: int = 5
+
+    # Rendering (advanced)
+    renderer: str = "hybrid"
+    hybrid_frac_start: float = 1e-2
+    hybrid_frac_end: float = 15.0
+    hybrid_n_sigma: int = 15
+    hybrid_num_pixel_render: int = 3
+    hybrid_precision: int = 10
+
+    # Parallelization (future)
+    use_mpi: bool = False
+    use_gpu: bool = False
+    device_id: int = 0
+
+    # Output
+    output_filename: str = "model_lightcurve.csv"
+    save_model_params: bool = True
+    save_chains: bool = False  # Deprecated
+
+    # Diagnostic visualization (pysersic built-in plots)
+    save_diagnostic_plots: bool = False
+    plot_image: bool = True
+    plot_residual: bool = True
+    plot_corner: bool = False
+    diagnostic_plot_format: str = "png"
+    diagnostic_plot_dpi: int = 150
+
+    # Posterior chain storage (similar to diagnostic plots)
+    save_posterior_chains: bool = False
+
+    def __post_init__(self):
+        """Validate parameters."""
+        # Validate profile_type
+        valid_profiles = ["pointsource", "sersic", "exp", "dev", "sersic_exp", "doublesersic"]
+        if self.profile_type not in valid_profiles:
+            raise ValueError(f"profile_type must be one of {valid_profiles}, got '{self.profile_type}'")
+
+        # Validate sky_type
+        valid_sky_types = ["tilted-plane", "flat", "none"]
+        if self.sky_type not in valid_sky_types:
+            raise ValueError(f"sky_type must be one of {valid_sky_types}, got '{self.sky_type}'")
+
+        # Validate inference_method
+        valid_methods = ["map", "laplace", "svi-mvn", "svi-flow", "nuts"]
+        if self.inference_method not in valid_methods:
+            raise ValueError(f"inference_method must be one of {valid_methods}, got '{self.inference_method}'")
+
+        # Validate numeric parameters
+        if self.num_samples <= 0:
+            raise ValueError(f"num_samples must be > 0, got {self.num_samples}")
+        if self.num_warmup < 0:
+            raise ValueError(f"num_warmup must be >= 0, got {self.num_warmup}")
+        if self.num_chains <= 0:
+            raise ValueError(f"num_chains must be > 0, got {self.num_chains}")
+        if not 0 < self.target_accept_prob < 1:
+            raise ValueError(f"target_accept_prob must be in (0, 1), got {self.target_accept_prob}")
+        if self.max_tree_depth <= 0:
+            raise ValueError(f"max_tree_depth must be > 0, got {self.max_tree_depth}")
+        if self.svi_num_steps <= 0:
+            raise ValueError(f"svi_num_steps must be > 0, got {self.svi_num_steps}")
+        if self.svi_learning_rate <= 0:
+            raise ValueError(f"svi_learning_rate must be > 0, got {self.svi_learning_rate}")
+        if self.position_prior_sigma <= 0:
+            raise ValueError(f"position_prior_sigma must be > 0, got {self.position_prior_sigma}")
+        if self.flux_prior_scale_factor <= 0:
+            raise ValueError(f"flux_prior_scale_factor must be > 0, got {self.flux_prior_scale_factor}")
+        if self.cutout_size <= 0:
+            raise ValueError(f"cutout_size must be > 0, got {self.cutout_size}")
+        if self.psf_oversample <= 0:
+            raise ValueError(f"psf_oversample must be > 0, got {self.psf_oversample}")
+        if self.student_t_df <= 0:
+            raise ValueError(f"student_t_df must be > 0, got {self.student_t_df}")
+        if self.device_id < 0:
+            raise ValueError(f"device_id must be >= 0, got {self.device_id}")
+        if self.diagnostic_plot_dpi <= 0:
+            raise ValueError(f"diagnostic_plot_dpi must be > 0, got {self.diagnostic_plot_dpi}")
+
+        # Validate psf_selection
+        valid_psf_methods = ["nearest", "interpolate", "center"]
+        if self.psf_selection not in valid_psf_methods:
+            raise ValueError(f"psf_selection must be one of {valid_psf_methods}, got '{self.psf_selection}'")
+
+        # Validate psf_downsample_method
+        valid_downsample = ["rebin", "interpolate"]
+        if self.psf_downsample_method not in valid_downsample:
+            raise ValueError(f"psf_downsample_method must be one of {valid_downsample}, got '{self.psf_downsample_method}'")
+
+        # Validate loss_function
+        valid_loss = ["gaussian", "student_t", "gaussian_mixture"]
+        if self.loss_function not in valid_loss:
+            raise ValueError(f"loss_function must be one of {valid_loss}, got '{self.loss_function}'")
+
+        # Validate renderer
+        valid_renderers = ["hybrid", "fourier", "pixel"]
+        if self.renderer not in valid_renderers:
+            raise ValueError(f"renderer must be one of {valid_renderers}, got '{self.renderer}'")
+
+        # Validate diagnostic_plot_format
+        valid_formats = ["png", "pdf", "jpg"]
+        if self.diagnostic_plot_format not in valid_formats:
+            raise ValueError(f"diagnostic_plot_format must be one of {valid_formats}, got '{self.diagnostic_plot_format}'")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ModelPhotometryConfig":
+        """Create from dictionary."""
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+
+@dataclass
 class AdvancedConfig:
     """
     Container for all advanced configuration options.
@@ -298,6 +547,7 @@ class AdvancedConfig:
     photometry: PhotometryConfig = field(default_factory=PhotometryConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
     download: DownloadConfig = field(default_factory=DownloadConfig)
+    model_photometry: ModelPhotometryConfig = field(default_factory=ModelPhotometryConfig)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -305,6 +555,7 @@ class AdvancedConfig:
             "photometry": self.photometry.to_dict(),
             "visualization": self.visualization.to_dict(),
             "download": self.download.to_dict(),
+            "model_photometry": self.model_photometry.to_dict(),
         }
 
     @classmethod
@@ -314,6 +565,7 @@ class AdvancedConfig:
             photometry=PhotometryConfig.from_dict(data.get("photometry", {})),
             visualization=VisualizationConfig.from_dict(data.get("visualization", {})),
             download=DownloadConfig.from_dict(data.get("download", {})),
+            model_photometry=ModelPhotometryConfig.from_dict(data.get("model_photometry", {})),
         )
 
     def to_json_file(self, filepath: Path) -> None:

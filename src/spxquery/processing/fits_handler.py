@@ -55,6 +55,7 @@ class SPHERExMEF:
     spatial_wcs: WCS  # Primary astrometric WCS
     spectral_wcs: WCS  # Alternative spectral WCS
     header: fits.Header  # Primary image header
+    psf_header: fits.Header  # PSF extension header with zone coordinates
     obs_id: str
     detector: int
     mjd: float
@@ -69,6 +70,100 @@ class SPHERExMEF:
     def error(self) -> np.ndarray:
         """Return error array (sqrt of variance)."""
         return np.sqrt(self.variance)
+
+    def create_cutout(
+        self,
+        x_center: float,
+        y_center: float,
+        size: int,
+        return_offset: bool = True,
+        custom_image: Optional[np.ndarray] = None,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Tuple[int, int, int, int], Optional[Tuple[float, float]]]:
+        """
+        Create a square cutout centered on specified pixel coordinates.
+
+        This is useful for focused analysis on a region of interest, such as
+        model fitting, which is computationally expensive on full images.
+
+        Parameters
+        ----------
+        x_center : float
+            X pixel coordinate of cutout center (0-based)
+        y_center : float
+            Y pixel coordinate of cutout center (0-based)
+        size : int
+            Size of cutout in pixels (will create size x size cutout)
+        return_offset : bool, optional
+            If True, return the adjusted center coordinates in cutout frame (default: True)
+        custom_image : np.ndarray, optional
+            Use this image instead of self.image (e.g., zodiacal-subtracted image).
+            Must have same shape as self.image. If None, uses self.image.
+
+        Returns
+        -------
+        image_cutout : np.ndarray
+            Cutout of calibrated flux image (or custom_image if provided)
+        variance_cutout : np.ndarray
+            Cutout of variance array
+        flags_cutout : np.ndarray
+            Cutout of flag bitmap array
+        bounds : tuple of int
+            Cutout bounds in parent image: (y_min, y_max, x_min, x_max)
+        center_in_cutout : tuple of float or None
+            (x_cutout, y_cutout) coordinates in cutout frame if return_offset=True, else None
+
+        Notes
+        -----
+        - Cutout is automatically clipped to image boundaries
+        - Returns raw flags; caller can create mask using create_background_mask() if needed
+        - Coordinates in cutout frame: (x_cutout, y_cutout) = (x_center - x_min, y_center - y_min)
+
+        Examples
+        --------
+        >>> mef = read_spherex_mef('image.fits')
+        >>> img, var, flags, bounds, (x_cut, y_cut) = mef.create_cutout(1020, 1020, 50)
+        >>> img.shape
+        (50, 50)
+        >>> # Create mask from flags if needed
+        >>> mask = create_background_mask(flags)
+        >>> # With custom zodiacal-subtracted image
+        >>> zodi_sub = mef.image - mef.zodi
+        >>> img, var, flags, bounds, pos = mef.create_cutout(1020, 1020, 50, custom_image=zodi_sub)
+        """
+        # Use custom image or default to self.image
+        image_to_cut = custom_image if custom_image is not None else self.image
+
+        # Validate custom image shape
+        if custom_image is not None and custom_image.shape != self.image.shape:
+            raise ValueError(
+                f"custom_image shape {custom_image.shape} does not match "
+                f"MEF image shape {self.image.shape}"
+            )
+
+        # Round center to integer
+        x_int, y_int = int(np.round(x_center)), int(np.round(y_center))
+
+        # Calculate cutout bounds (ensure within image)
+        half_size = size // 2
+        ny, nx = image_to_cut.shape
+        y_min = max(0, y_int - half_size)
+        y_max = min(ny, y_int + half_size)
+        x_min = max(0, x_int - half_size)
+        x_max = min(nx, x_int + half_size)
+
+        # Extract cutouts
+        image_cutout = image_to_cut[y_min:y_max, x_min:x_max]
+        variance_cutout = self.variance[y_min:y_max, x_min:x_max]
+        flags_cutout = self.flags[y_min:y_max, x_min:x_max]
+
+        # Calculate center position in cutout coordinates
+        center_in_cutout = None
+        if return_offset:
+            x_cutout = x_center - x_min
+            y_cutout = y_center - y_min
+            center_in_cutout = (x_cutout, y_cutout)
+
+        return image_cutout, variance_cutout, flags_cutout, (y_min, y_max, x_min, x_max), center_in_cutout
 
 
 def read_spherex_mef(filepath: Path) -> SPHERExMEF:
@@ -111,6 +206,7 @@ def read_spherex_mef(filepath: Path) -> SPHERExMEF:
         variance_data = hdulist["VARIANCE"].data.astype(np.float32)
         zodi_data = hdulist["ZODI"].data.astype(np.float32)
         psf_data = hdulist["PSF"].data.astype(np.float32)
+        psf_header = hdulist["PSF"].header
 
         # Load WCS with suppressed warnings about SCAMP/SIP distortion parameters
         with suppress_astropy_info():
@@ -142,6 +238,7 @@ def read_spherex_mef(filepath: Path) -> SPHERExMEF:
             spatial_wcs=spatial_wcs,
             spectral_wcs=spectral_wcs,
             header=image_header,
+            psf_header=psf_header,
             obs_id=obs_id,
             detector=detector,
             mjd=mjd,

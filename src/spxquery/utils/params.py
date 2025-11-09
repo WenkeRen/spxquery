@@ -75,6 +75,7 @@ def export_default_parameters(output_path: Union[str, Path], filename: str = "sp
     print(f"File location: {final_path}")
     print("\nThis template contains customizable parameters for:")
     print("  • Photometry (aperture, background annulus, sigma clipping)")
+    print("  • Model Photometry (pysersic fitting, PSF, priors, inference methods)")
     print("  • Visualization (colormaps, marker sizes, figure settings)")
     print("  • Downloads (chunk size, timeouts, retries)")
     print("\nNOTE: This template does NOT include source information (ra/dec).")
