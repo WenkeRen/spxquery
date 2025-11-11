@@ -54,6 +54,10 @@ def generate_lightcurve_dataframe(photometry_results: List[PhotometryResult], so
             "pix_y": result.pix_y,
             "is_upper_limit": result.is_upper_limit,
             "snr": result.flux / result.flux_error if result.flux_error > 0 else 0,
+            "photometry_method": result.photometry_method,
+            "model_type": result.model_type if hasattr(result, "model_type") else None,
+            "model_chi2": result.model_chi2 if hasattr(result, "model_chi2") else None,
+            "psf_zone_id": result.psf_zone_id if hasattr(result, "psf_zone_id") else None,
         }
         records.append(record)
 

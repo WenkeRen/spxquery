@@ -42,6 +42,7 @@ dependencies = [
     "photutils>=2.0,<3.0",
     "pandas>=2.0,<3.0",
     "scipy>=1.12,<2.0",
+    "astrophot (>=0.16.13,<0.17.0)",
 ]
 
 [project.urls]

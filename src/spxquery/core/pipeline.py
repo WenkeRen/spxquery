@@ -326,11 +326,11 @@ class SPXQueryPipeline:
         self.save_state()
 
     def run_processing(self) -> None:
-        """Execute processing stage."""
+        """Execute processing stage (aperture photometry only)."""
         # Check dependencies
         self.check_dependencies("processing")
 
-        logger.info("Running processing stage")
+        logger.info("Running processing stage (aperture photometry)")
 
         # Get list of downloaded files
         if not self.state.downloaded_files:
@@ -346,8 +346,7 @@ class SPXQueryPipeline:
 
         logger.info(f"Processing {len(self.state.downloaded_files)} FITS files")
 
-        # Process all files
-        # Convert diameter to radius for photometry function
+        # Run aperture photometry
         photometry_results = process_all_observations(
             self.state.downloaded_files,
             self.config.source,
@@ -380,6 +379,124 @@ class SPXQueryPipeline:
         self.state.stage = "visualization"
         self.mark_stage_complete("processing")
         self.save_state()
+
+    def run_modeling_photometry(self, overwrite_results: bool = False) -> None:
+        """
+        Execute model-based photometry using AstroPhot.
+
+        This is an optional, resource-intensive step that must be called explicitly.
+        It is NOT part of the standard pipeline and will not run automatically.
+
+        Parameters
+        ----------
+        overwrite_results : bool
+            If True, replace existing aperture photometry results with model results.
+            If False, model results are computed but aperture results remain in state.
+            Default: False (keeps aperture results).
+
+        Notes
+        -----
+        - Requires aperture photometry to be completed first (for initial flux guesses)
+        - Model type specified in config.advanced.model_photometry.model_type
+        - Results saved to separate CSV: lightcurve_model.csv
+        - Use run_visualization() after this to create plots with model results
+
+        Examples
+        --------
+        >>> pipeline = SPXQueryPipeline(config)
+        >>> pipeline.run_full_pipeline()  # Runs aperture photometry
+        >>> pipeline.run_modeling_photometry()  # Explicitly run model photometry
+        >>> pipeline.run_visualization()  # Re-run visualization with model results
+        """
+        # Check configuration
+        if not self.config.advanced.model_photometry.enabled:
+            logger.warning(
+                "Model photometry is not enabled in configuration. "
+                "Set config.advanced.model_photometry.enabled = True to use this feature."
+            )
+            return
+
+        # Check that processing (aperture) has been completed
+        if "processing" not in self.state.completed_stages:
+            raise RuntimeError(
+                "Cannot run modeling photometry: aperture photometry (processing stage) "
+                "must be completed first. Run run_processing() or run_full_pipeline() first."
+            )
+
+        # Get aperture results for initial guesses
+        if not self.state.photometry_results:
+            # Try to load from CSV
+            csv_path = self.results_dir / "lightcurve.csv"
+            if csv_path.exists():
+                logger.info("Loading aperture photometry results from CSV")
+                self.state.photometry_results = load_lightcurve_from_csv(csv_path)
+            else:
+                raise RuntimeError(
+                    "No aperture photometry results found. "
+                    "Run run_processing() or run_full_pipeline() first."
+                )
+
+        # Check for downloaded files
+        if not self.state.downloaded_files:
+            self.state.downloaded_files = get_file_list(self.data_dir, "*.fits")
+
+        if not self.state.downloaded_files:
+            logger.error("No FITS files found for model photometry")
+            return
+
+        logger.info("=" * 60)
+        logger.info("RUNNING MODEL-BASED PHOTOMETRY (RESOURCE INTENSIVE)")
+        logger.info(f"Model type: {self.config.advanced.model_photometry.model_type}")
+        logger.info(f"Fitting method: {self.config.advanced.model_photometry.fitting_method}")
+        logger.info(f"Number of observations: {len(self.state.downloaded_files)}")
+        logger.info("=" * 60)
+
+        # Import model photometry module
+        from ..processing.model_photometry import process_all_observations_model
+
+        # Run model photometry with aperture results as initial guesses
+        model_results = process_all_observations_model(
+            self.state.downloaded_files,
+            self.config.source,
+            self.config.advanced.model_photometry,
+            self.config.advanced.photometry,
+            aperture_results=self.state.photometry_results if self.config.advanced.model_photometry.initial_flux_from_aperture else None,
+        )
+
+        if not model_results:
+            logger.warning("No model photometry results obtained")
+            return
+
+        # Generate light curve DataFrame
+        df_model = generate_lightcurve_dataframe(model_results, self.config.source)
+
+        # Save model light curve to separate CSV
+        csv_path_model = self.results_dir / "lightcurve_model.csv"
+        save_lightcurve_csv(df_model, csv_path_model)
+
+        logger.info(f"Model photometry results saved to {csv_path_model}")
+
+        # Print summary
+        print_lightcurve_summary(df_model)
+
+        # Optionally overwrite results in state
+        if overwrite_results:
+            logger.info("Overwriting photometry results with model results")
+            self.state.photometry_results = model_results
+            self.state.csv_path = csv_path_model
+            self.save_state()
+            logger.info("State updated with model photometry results")
+        else:
+            logger.info(
+                "Model results computed but not saved to state. "
+                "Aperture results remain active. Use overwrite_results=True to replace."
+            )
+
+        logger.info("=" * 60)
+        logger.info("MODEL PHOTOMETRY COMPLETE")
+        logger.info(f"Aperture results: {self.results_dir / 'lightcurve.csv'}")
+        logger.info(f"Model results: {csv_path_model}")
+        logger.info("=" * 60)
 
     def run_visualization(self) -> None:
         """Execute visualization stage."""

@@ -14,8 +14,7 @@ from tqdm import tqdm
 from ..core.config import PhotometryResult, Source
 from .fits_handler import (
     create_background_mask,
-    get_pixel_coordinates,
-    get_pixel_scale_at_position,
+    get_pixel_scale,
     get_wavelength_at_position,
     read_spherex_mef,
     subtract_zodiacal_background,
@@ -479,7 +478,7 @@ def extract_source_photometry(
         mef = read_spherex_mef(mef_file)
 
         # Get pixel coordinates
-        x, y = get_pixel_coordinates(mef, source.ra, source.dec)
+        x, y = mef.spatial_wcs.world_to_pixel(source.coord)
 
         # Check if coordinates are within image with extra margin for background annulus
         ny, nx = mef.image.shape
@@ -536,7 +535,7 @@ def extract_source_photometry(
         # Convert from MJy/sr to microJansky (μJy) for output
         # The aperture photometry returns a sum: Σ(surface_brightness_i) across pixels
         # To convert to flux: multiply by solid angle PER PIXEL, not total aperture
-        pixel_scale_arcsec = get_pixel_scale_at_position(mef.spatial_wcs, x, y, photometry_config.pixel_scale_fallback)
+        pixel_scale_arcsec = get_pixel_scale(mef.spatial_wcs, photometry_config.pixel_scale_fallback)
         pixel_solid_angle_sr = (pixel_scale_arcsec / 206265.0) ** 2  # Convert arcsec to radians, then square
 
         # Convert: (MJy/sr × pixels) × (sr/pixel) = MJy → Jy → μJy

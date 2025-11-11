@@ -9,6 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import astropy.units as u
+from astropy.coordinates import SkyCoord
+
 from .. import __version__
 
 logger = logging.getLogger(__name__)
@@ -27,6 +30,11 @@ class Source:
             raise ValueError(f"RA must be between 0 and 360 degrees, got {self.ra}")
         if not -90 <= self.dec <= 90:
             raise ValueError(f"Dec must be between -90 and 90 degrees, got {self.dec}")
+
+    @property
+    def coord(self) -> SkyCoord:
+        """Return source coordinates as SkyCoord."""
+        return SkyCoord(ra=self.ra * u.deg, dec=self.dec * u.deg, frame="icrs")
 
 
 @dataclass
@@ -287,6 +295,125 @@ class DownloadConfig:
 
 
 @dataclass
+class ModelPhotometryConfig:
+    """
+    Model-based photometry configuration using AstroPhot.
+
+    Supports various source models (point source, Sersic profile, etc.) for
+    improved photometric precision. Addresses SPHEREx undersampling (6.2"/pixel
+    vs 5" FWHM PSF) using 10x oversampled PSF images.
+
+    Attributes
+    ----------
+    enabled : bool
+        Enable model-based photometry availability. Default: False.
+        Note: Even when True, modeling photometry must be explicitly called
+        via run_modeling_photometry() and is NOT part of standard pipeline.
+    model_type : str
+        Source model to fit. Default: "point_source".
+        Options: "point_source" (PSF convolution), "sersic" (galaxy profile),
+        "exponential", "gaussian", etc. (see AstroPhot documentation).
+    fitting_method : str
+        AstroPhot fitting method. Default: "LM" (Levenberg-Marquardt).
+        Options: "LM", "Nested", "HMC" (see AstroPhot documentation).
+    psf_oversample_factor : int
+        PSF oversampling factor. Default: 10 (SPHEREx standard).
+        Do not change unless using non-standard PSF data.
+    fitting_box_size : int
+        Size of fitting region in pixels (image scale, not PSF scale).
+        Default: 30. Must be >= 20 pixels (2× PSF effective size).
+        Increase for extended sources, decrease for crowded fields.
+    initial_flux_from_aperture : bool
+        Use aperture photometry result as initial flux guess. Default: True.
+        Improves convergence but requires running aperture photometry first.
+    save_residuals : bool
+        Save model fitting residual images to FITS files. Default: False.
+        Useful for quality assessment but increases disk usage.
+    save_fitting_plots : bool
+        Save model and residual plots for each observation. Default: False.
+        Creates PNG files showing fitted model and normalized residuals.
+    residuals_dir : str
+        Directory name for residual FITS files (relative to output_dir).
+        Default: "model_residuals". Organized by band: model_residuals/D1/, etc.
+    plots_dir : str
+        Directory name for fitting plots (relative to output_dir).
+        Default: "model_plots". Organized by band: model_plots/D1/, etc.
+    background_method : str
+        Background estimation method. Default: "local_annulus".
+        Options: "local_annulus" (annulus around source), "global" (image median),
+        "plane" (fit plane to image), "none" (assume background-subtracted).
+    max_iterations : int
+        Maximum fitting iterations. Default: 100.
+        Increase for difficult fits, decrease for speed.
+    convergence_tolerance : float
+        Convergence criterion for fitting. Default: 1e-6.
+        Smaller values require tighter convergence but may not improve results.
+    """
+
+    enabled: bool = False
+    model_type: str = "point_source"
+    fitting_method: str = "LM"
+    psf_oversample_factor: int = 10
+    fitting_box_size: int = 30
+    initial_flux_from_aperture: bool = True
+    save_residuals: bool = False
+    save_fitting_plots: bool = False
+    residuals_dir: str = "model_residuals"
+    plots_dir: str = "model_plots"
+    background_method: str = "local_annulus"
+    max_iterations: int = 100
+    convergence_tolerance: float = 1e-6
+
+    def __post_init__(self):
+        """Validate parameters."""
+        # Validate model type
+        valid_models = ["point_source", "sersic", "exponential", "gaussian"]
+        if self.model_type not in valid_models:
+            raise ValueError(f"model_type must be one of {valid_models}, got '{self.model_type}'")
+
+        # Validate fitting method
+        valid_methods = ["LM", "Nested", "HMC"]
+        if self.fitting_method not in valid_methods:
+            raise ValueError(f"fitting_method must be one of {valid_methods}, got '{self.fitting_method}'")
+
+        # Validate numeric parameters
+        if self.psf_oversample_factor <= 0:
+            raise ValueError(f"psf_oversample_factor must be > 0, got {self.psf_oversample_factor}")
+        if self.fitting_box_size <= 0:
+            raise ValueError(f"fitting_box_size must be > 0, got {self.fitting_box_size}")
+
+        # Validate fitting_box_size is large enough for PSF
+        # PSF is typically 101 pixels at 10x oversampling = 10.1 pixels effective
+        # Need at least 2x PSF size for robust fitting
+        min_fitting_box = 20
+        if self.fitting_box_size < min_fitting_box:
+            raise ValueError(
+                f"fitting_box_size must be >= {min_fitting_box} pixels "
+                f"(2× PSF effective size), got {self.fitting_box_size}"
+            )
+        if self.max_iterations <= 0:
+            raise ValueError(f"max_iterations must be > 0, got {self.max_iterations}")
+        if self.convergence_tolerance <= 0:
+            raise ValueError(f"convergence_tolerance must be > 0, got {self.convergence_tolerance}")
+
+        # Validate background method
+        valid_bg_methods = ["local_annulus", "global", "plane", "none"]
+        if self.background_method not in valid_bg_methods:
+            raise ValueError(f"background_method must be one of {valid_bg_methods}, got '{self.background_method}'")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ModelPhotometryConfig":
+        """Create from dictionary."""
+        valid_keys = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in valid_keys}
+        return cls(**filtered_data)
+
+
+@dataclass
 class AdvancedConfig:
     """
     Container for all advanced configuration options.
@@ -298,6 +425,7 @@ class AdvancedConfig:
     photometry: PhotometryConfig = field(default_factory=PhotometryConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
     download: DownloadConfig = field(default_factory=DownloadConfig)
+    model_photometry: ModelPhotometryConfig = field(default_factory=ModelPhotometryConfig)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -305,6 +433,7 @@ class AdvancedConfig:
             "photometry": self.photometry.to_dict(),
             "visualization": self.visualization.to_dict(),
             "download": self.download.to_dict(),
+            "model_photometry": self.model_photometry.to_dict(),
         }
 
     @classmethod
@@ -314,6 +443,7 @@ class AdvancedConfig:
             photometry=PhotometryConfig.from_dict(data.get("photometry", {})),
             visualization=VisualizationConfig.from_dict(data.get("visualization", {})),
             download=DownloadConfig.from_dict(data.get("download", {})),
+            model_photometry=ModelPhotometryConfig.from_dict(data.get("model_photometry", {})),
         )
 
     def to_json_file(self, filepath: Path) -> None:
@@ -554,7 +684,11 @@ class QueryResults:
 
 @dataclass
 class PhotometryResult:
-    """Result from aperture photometry on a single observation."""
+    """
+    Result from photometry on a single observation.
+
+    Supports both aperture and model-based photometry methods.
+    """
 
     obs_id: str
     mjd: float
@@ -568,6 +702,10 @@ class PhotometryResult:
     band: str
     mag_ab: Optional[float] = None  # AB magnitude
     mag_ab_error: Optional[float] = None  # AB magnitude error
+    photometry_method: str = "aperture"  # "aperture" or "model"
+    model_type: Optional[str] = None  # Model used: "point_source", "sersic", etc.
+    model_chi2: Optional[float] = None  # Reduced chi-squared for model fit
+    psf_zone_id: Optional[int] = None  # PSF zone used (1-121) for point source models
 
     @property
     def is_upper_limit(self) -> bool:
@@ -660,6 +798,10 @@ class PipelineState:
                     "band": pr.band,
                     "mag_ab": pr.mag_ab,
                     "mag_ab_error": pr.mag_ab_error,
+                    "photometry_method": pr.photometry_method,
+                    "model_type": pr.model_type,
+                    "model_chi2": pr.model_chi2,
+                    "psf_zone_id": pr.psf_zone_id,
                 }
                 for pr in self.photometry_results
             ],

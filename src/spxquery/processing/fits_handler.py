@@ -14,6 +14,7 @@ import numpy as np
 from astropy import log as astropy_log
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
+from astropy.nddata import Cutout2D
 from astropy.wcs import WCS
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,8 @@ class SPHERExMEF:
     flags: np.ndarray  # Bitmap flags
     variance: np.ndarray  # Variance in (MJy/sr)^2
     zodi: np.ndarray  # Zodiacal light model in MJy/sr
-    psf: np.ndarray  # PSF cube (101x101x121)
+    psf: np.ndarray  # PSF cube (121, 101, 101)
+    psf_header: fits.Header  # PSF extension header
     spatial_wcs: WCS  # Primary astrometric WCS
     spectral_wcs: WCS  # Alternative spectral WCS
     header: fits.Header  # Primary image header
@@ -69,6 +71,102 @@ class SPHERExMEF:
     def error(self) -> np.ndarray:
         """Return error array (sqrt of variance)."""
         return np.sqrt(self.variance)
+
+    def get_psf_at_position(self, x: float, y: float) -> Tuple[np.ndarray, int]:
+        """
+        Get the appropriate PSF for a given pixel position.
+
+        This method encapsulates PSF extraction logic, automatically handling:
+        - Zone center extraction from PSF header
+        - Coordinate mapping (cutout to parent image)
+        - PSF zone identification
+        - PSF extraction and normalization
+
+        Parameters
+        ----------
+        x : float
+            Pixel X coordinate (0-indexed) on the current image.
+        y : float
+            Pixel Y coordinate (0-indexed) on the current image.
+
+        Returns
+        -------
+        psf_array : np.ndarray
+            Normalized PSF array, shape (101, 101), sum = 1.0.
+        zone_id : int
+            PSF zone ID (1-121) used for this position.
+
+        Examples
+        --------
+        >>> mef = read_spherex_mef("spherex_image.fits")
+        >>> psf, zone = mef.get_psf_at_position(x=1020.5, y=1020.5)
+        >>> print(f"Using PSF zone {zone}, shape {psf.shape}, sum {psf.sum():.6f}")
+        """
+        from .psf_utils import get_psf_for_source
+
+        psf_array, zone_id = get_psf_for_source(self.psf, self.psf_header, self.header, x, y)
+
+        return psf_array, zone_id
+
+    def create_cutout(
+        self, position: Tuple[float, float], size: int, mode: str = "trim"
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, WCS]:
+        """
+        Create WCS-aware cutout around a source position.
+
+        Uses astropy.nddata.Cutout2D to create a cutout with properly adjusted WCS.
+        This ensures that the WCS in the cutout correctly maps pixel coordinates
+        to sky coordinates.
+
+        Parameters
+        ----------
+        position : tuple of float
+            Pixel position (x, y) at the center of the cutout (0-indexed).
+        size : int
+            Size of the cutout in pixels (square cutout).
+        mode : str
+            Cutout mode passed to Cutout2D (default "trim").
+
+        Returns
+        -------
+        image_cutout : np.ndarray
+            Cutout of the image data.
+        variance_cutout : np.ndarray
+            Cutout of the variance data.
+        flags_cutout : np.ndarray
+            Cutout of the flags data.
+        cutout_wcs : WCS
+            WCS object adjusted for the cutout coordinates.
+
+        Examples
+        --------
+        >>> mef = read_spherex_mef("spherex_image.fits")
+        >>> img, var, flags, wcs = mef.create_cutout(position=(1020, 1020), size=15)
+        >>> print(f"Cutout shape: {img.shape}, WCS adjusted: {wcs}")
+
+        Notes
+        -----
+        The returned WCS is adjusted so that pixel (0, 0) in the cutout corresponds
+        to the correct sky coordinates. The position in the cutout is relative to
+        the cutout origin, not the original image.
+        """
+        # Create cutouts using Cutout2D (handles WCS automatically)
+        image_cutout_obj = Cutout2D(self.image, position, size, wcs=self.spatial_wcs, mode=mode)
+        variance_cutout_obj = Cutout2D(self.variance, position, size, wcs=self.spatial_wcs, mode=mode)
+        flags_cutout_obj = Cutout2D(self.flags, position, size, wcs=self.spatial_wcs, mode=mode)
+
+        logger.debug(
+            f"Created cutout at position {position}, size {size}: "
+            f"shape {image_cutout_obj.data.shape}, "
+            f"WCS adjusted from origin {image_cutout_obj.origin_original}"
+        )
+
+        return (
+            image_cutout_obj.data,
+            variance_cutout_obj.data,
+            flags_cutout_obj.data,
+            image_cutout_obj.wcs,
+        )
 
 
 def read_spherex_mef(filepath: Path) -> SPHERExMEF:
@@ -111,6 +209,7 @@ def read_spherex_mef(filepath: Path) -> SPHERExMEF:
         variance_data = hdulist["VARIANCE"].data.astype(np.float32)
         zodi_data = hdulist["ZODI"].data.astype(np.float32)
         psf_data = hdulist["PSF"].data.astype(np.float32)
+        psf_header = hdulist["PSF"].header
 
         # Load WCS with suppressed warnings about SCAMP/SIP distortion parameters
         with suppress_astropy_info():
@@ -139,6 +238,7 @@ def read_spherex_mef(filepath: Path) -> SPHERExMEF:
             variance=variance_data,
             zodi=zodi_data,
             psf=psf_data,
+            psf_header=psf_header,
             spatial_wcs=spatial_wcs,
             spectral_wcs=spectral_wcs,
             header=image_header,
@@ -209,19 +309,17 @@ def get_wavelength_at_position(mef: SPHERExMEF, x: float, y: float) -> Tuple[flo
     return wavelength, bandwidth
 
 
-def get_pixel_scale_at_position(wcs: WCS, x: float, y: float, pixel_scale_fallback: float = 6.2) -> float:
+def get_pixel_scale(wcs: WCS, pixel_scale_fallback: float = 6.2) -> float:
     """
-    Calculate the pixel scale in arcsec/pixel at a given position using WCS.
+    Calculate the pixel scale in arcsec/pixel from WCS.
 
-    This accounts for any distortions and provides the actual pixel scale
-    at the specified position rather than assuming a fixed value.
+    For SPHEREx images, uses the geometric mean of pixel scales in both axes
+    to get a representative scale for approximately square pixels.
 
     Parameters
     ----------
     wcs : WCS
         World Coordinate System object
-    x, y : float
-        Pixel coordinates (0-based)
     pixel_scale_fallback : float
         Fallback pixel scale in arcsec/pixel if WCS fails (default: 6.2 for SPHEREx)
 
@@ -230,20 +328,14 @@ def get_pixel_scale_at_position(wcs: WCS, x: float, y: float, pixel_scale_fallba
     float
         Pixel scale in arcseconds per pixel
     """
-    # Calculate pixel scale using the determinant of the CD matrix
-    # This gives the area of a pixel in degrees²
     try:
-        # Get the pixel scale from the WCS at the specified position
+        # Get the pixel scale from the WCS
         pixel_scales = wcs.proj_plane_pixel_scales()  # Returns scales in degrees/pixel
 
         # For SPHEREx, pixels should be roughly square, so take the geometric mean
-        # of the two pixel scales to get a representative scale
-        pixel_scale_deg = float(np.sqrt(pixel_scales[0] * pixel_scales[1]).value)
+        pixel_scale_arcsec = np.sqrt(pixel_scales[0] * pixel_scales[1]).to(u.arcsec).value
 
-        # Convert from degrees to arcseconds
-        pixel_scale_arcsec = pixel_scale_deg * 3600.0
-
-        logger.debug(f"WCS pixel scale at ({x:.1f}, {y:.1f}): {pixel_scale_arcsec:.3f} arcsec/pixel")
+        logger.debug(f"WCS pixel scale: {pixel_scale_arcsec:.3f} arcsec/pixel")
 
         return pixel_scale_arcsec
 
@@ -251,7 +343,84 @@ def get_pixel_scale_at_position(wcs: WCS, x: float, y: float, pixel_scale_fallba
         logger.warning(
             f"Failed to calculate pixel scale from WCS: {e}. Using fallback {pixel_scale_fallback} arcsec/pixel"
         )
-        return pixel_scale_fallback  # Fallback to configured pixel scale
+        return pixel_scale_fallback
+
+
+def create_psf_wcs(psf_header: fits.Header) -> Optional[WCS]:
+    """
+    Create WCS object from PSF header.
+
+    The PSF extension contains astrometric WCS information that can be
+    used to determine the PSF pixel scale.
+
+    Parameters
+    ----------
+    psf_header : fits.Header
+        PSF extension header
+
+    Returns
+    -------
+    WCS or None
+        WCS object for PSF, or None if creation fails
+    """
+    try:
+        psf_wcs = WCS(psf_header)
+        return psf_wcs
+    except Exception as e:
+        logger.warning(f"Failed to create PSF WCS from header: {e}")
+        return None
+
+
+def validate_psf_pixel_scale(image_pixel_scale: float, psf_wcs: Optional[WCS], oversample_factor: int) -> float:
+    """
+    Validate and determine PSF pixel scale.
+
+    Checks that PSF pixel scale matches expected value (image_scale / oversample_factor).
+    Rounds image pixel scale to 2 decimals for comparison.
+
+    Parameters
+    ----------
+    image_pixel_scale : float
+        Image pixel scale in arcsec/pixel
+    psf_wcs : WCS or None
+        PSF WCS object (can be None for irregular PSFs)
+    oversample_factor : int
+        Expected PSF oversampling factor (e.g., 10 for 10x oversampled)
+
+    Returns
+    -------
+    float
+        PSF pixel scale in arcsec/pixel
+
+    Raises
+    ------
+    ValueError
+        If PSF pixel scale doesn't match expected value (when PSF WCS is available)
+    """
+    # Round image pixel scale to 2 decimals
+    image_scale_rounded = round(image_pixel_scale, 2)
+    expected_psf_scale = image_scale_rounded / oversample_factor
+
+    logger.debug(f"Image pixel scale: {image_pixel_scale:.4f} arcsec/pixel (rounded: {image_scale_rounded:.2f})")
+    logger.debug(f"Expected PSF pixel scale: {expected_psf_scale:.4f} arcsec/pixel (1/{oversample_factor}x)")
+
+    # If PSF WCS provided, validate it matches expected value
+    if psf_wcs is not None:
+        # Use expected value as fallback for irregular PSFs
+        actual_psf_scale = get_pixel_scale(psf_wcs, pixel_scale_fallback=expected_psf_scale)
+
+        # Check compliance with 1% relative tolerance for rounding differences
+        if not np.isclose(actual_psf_scale, expected_psf_scale, rtol=0.01):
+            raise ValueError(
+                f"PSF pixel scale mismatch: expected {expected_psf_scale:.4f} arcsec/pixel "
+                f"(image_scale/{oversample_factor}), got {actual_psf_scale:.4f} arcsec/pixel. "
+                f"PSF pixel scale must be exactly image_scale / oversample_factor."
+            )
+
+        logger.debug(f"PSF pixel scale validated: {actual_psf_scale:.4f} arcsec/pixel")
+
+    # Return exact expected value (not the rounded actual value)
+    return expected_psf_scale
 
 
 def get_flag_info(flag_value: int) -> Dict[str, bool]:
