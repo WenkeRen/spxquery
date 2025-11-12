@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [project]
 name = "spxquery"
-version = "0.2.1"
+version = "0.2.2"
 description = "SPHEREx time-domain analysis package for querying and analyzing spectral image data"
 readme = "README.md"
 license = "MIT"

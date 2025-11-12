@@ -12,7 +12,7 @@ try:
     __version__ = version("spxquery")
 except PackageNotFoundError:
     # Package is not installed, use fallback (for development)
-    __version__ = "0.2.0"  # Sync with pyproject.toml manually for development
+    __version__ = "0.2.2"  # Sync with pyproject.toml manually for development
 
 __author__ = "SPXQuery Team"
 
