@@ -128,6 +128,10 @@ bad_flags = [0, 1, 2, 6, 7, 9, 10, 11, 15]
 | 10 | HOT | Hot pixel |
 | 11 | COLD | Cold pixel |
 | 15 | NONLINEAR | Non-linear response |
+| 12 | FULLSAMPLE | Full sample available | Quality indicator, not rejection criterion |
+| 14 | PHANMISS | Phantom or missing | Overlap with bits 0, 9 |
+| 17 | PERSIST | Detector persistence | Low impact for most sources |
+| 19 | OUTLIER | Statistical outlier | May be real variability |
 
 ### Other Available Flags
 
@@ -135,10 +139,6 @@ SPHEREx provides additional flags that are **not** rejected by default:
 
 | Bit | Flag Name | Description | Why Not Default |
 |-----|-----------|-------------|-----------------|
-| 12 | FULLSAMPLE | Full sample available | Quality indicator, not rejection criterion |
-| 14 | PHANMISS | Phantom or missing | Overlap with bits 0, 9 |
-| 17 | PERSIST | Detector persistence | Low impact for most sources |
-| 19 | OUTLIER | Statistical outlier | May be real variability |
 | 21 | SOURCE | Source detected | Informational |
 
 ### Customizing Bad Flags
