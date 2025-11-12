@@ -2,11 +2,12 @@
 Helper utility functions for SPXQuery package.
 """
 
-import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +28,9 @@ def setup_logging(level: str = "INFO") -> None:
     )
 
 
-def save_json(data: Dict[str, Any], filepath: Path) -> None:
+def save_yaml(data: Dict[str, Any], filepath: Path) -> None:
     """
-    Save dictionary to JSON file.
+    Save dictionary to YAML file.
 
     Parameters
     ----------
@@ -40,13 +41,13 @@ def save_json(data: Dict[str, Any], filepath: Path) -> None:
     """
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w") as f:
-        json.dump(data, f, indent=2, default=str)
-    logger.debug(f"Saved JSON to {filepath}")
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    logger.debug(f"Saved YAML to {filepath}")
 
 
-def load_json(filepath: Path) -> Dict[str, Any]:
+def load_yaml(filepath: Path) -> Dict[str, Any]:
     """
-    Load dictionary from JSON file.
+    Load dictionary from YAML file.
 
     Parameters
     ----------
@@ -59,8 +60,8 @@ def load_json(filepath: Path) -> Dict[str, Any]:
         Loaded data
     """
     with open(filepath, "r") as f:
-        data = json.load(f)
-    logger.debug(f"Loaded JSON from {filepath}")
+        data = yaml.safe_load(f)
+    logger.debug(f"Loaded YAML from {filepath}")
     return data
 
 
@@ -509,7 +510,7 @@ def apply_quality_filters(
         Minimum SNR (flux/flux_err) to accept (default: 5.0)
     bad_flags : list[int], optional
         List of bad flag bit positions to reject
-        Default: [0, 1, 2, 6, 7, 9, 10, 11, 15]
+        Default: [0, 1, 2, 6, 7, 9, 10, 11, 14, 15, 17, 19]
 
     Returns
     -------
@@ -531,7 +532,7 @@ def apply_quality_filters(
     1
     """
     if bad_flags is None:
-        bad_flags = [0, 1, 2, 6, 7, 9, 10, 11, 15]
+        bad_flags = [0, 1, 2, 6, 7, 9, 10, 11, 14, 15, 17, 19]
 
     # Convert bad_flags list to mask once for efficient checking
     bad_flags_mask = create_flag_mask(bad_flags)

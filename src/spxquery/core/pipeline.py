@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Union
 
-from ..core.config import DownloadResult, PipelineState, QueryConfig
+from ..core.config import AdvancedConfig, DownloadResult, PipelineState
 from ..core.download import parallel_download, print_download_summary
 from ..core.query import print_query_summary, query_spherex_observations
 from ..processing.lightcurve import (
@@ -16,7 +16,7 @@ from ..processing.lightcurve import (
     save_lightcurve_csv,
 )
 from ..processing.photometry import process_all_observations
-from ..utils.helpers import format_cutout_url_params, get_file_list, load_json, save_json, setup_logging
+from ..utils.helpers import format_cutout_url_params, get_file_list, load_yaml, save_yaml, setup_logging
 from ..visualization.plots import create_combined_plot
 
 logger = logging.getLogger(__name__)
@@ -41,46 +41,48 @@ class SPXQueryPipeline:
         "visualization": ["query", "download", "processing"],
     }
 
-    def __init__(self, config: QueryConfig, pipeline_stages: Optional[List[str]] = None):
+    def __init__(self, config: AdvancedConfig, pipeline_stages: Optional[List[str]] = None):
         """
         Initialize pipeline with configuration.
 
         Parameters
         ----------
-        config : QueryConfig
-            Pipeline configuration
+        config : AdvancedConfig
+            Complete pipeline configuration including query, photometry, visualization, and download settings
         pipeline_stages : List[str], optional
-            List of stages to execute. Default: ['query', 'download', 'processing', 'visualization']
+            List of stages to execute. If None, uses config.pipeline_stages.
+            Default: ['query', 'download', 'processing', 'visualization']
             Allows customization of pipeline flow (e.g., skip visualization, add custom stages)
         """
         self.config = config
 
-        # Set pipeline stages (default or custom)
-        if pipeline_stages is None:
-            pipeline_stages = ["query", "download", "processing", "visualization"]
+        # Set pipeline stages (explicit parameter > config > default)
+        if pipeline_stages is not None:
+            # Override config's pipeline_stages if explicitly provided
+            self.config.pipeline_stages = pipeline_stages
 
         # Initialize state
-        self.state = PipelineState(stage="query", config=config, pipeline_stages=pipeline_stages, completed_stages=[])
+        self.state = PipelineState(stage="query", config=config, completed_stages=[])
 
         # Set up directories
-        self.data_dir = config.output_dir / "data"
-        self.results_dir = config.output_dir / "results"
+        self.data_dir = config.query.output_dir / "data"
+        self.results_dir = config.query.output_dir / "results"
         # State file named after source for easy identification
-        source_name = config.source.name or f"source_{config.source.ra:.4f}_{config.source.dec:.4f}"
-        self.state_file = config.output_dir / f"{source_name}.json"
+        source_name = config.query.source.name or f"source_{config.query.source.ra:.4f}_{config.query.source.dec:.4f}"
+        self.state_file = config.query.output_dir / f"{source_name}.yaml"
 
         # Create directories
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"Initialized pipeline for source at RA={config.source.ra}, Dec={config.source.dec}")
-        logger.info(f"Pipeline stages: {self.state.pipeline_stages}")
+        logger.info(f"Initialized pipeline for source at RA={config.query.source.ra}, Dec={config.query.source.dec}")
+        logger.info(f"Pipeline stages: {self.config.pipeline_stages}")
         logger.info(f"State file: {self.state_file.name}")
 
     def save_state(self) -> None:
         """Save current pipeline state to disk."""
         state_dict = self.state.to_dict()
-        save_json(state_dict, self.state_file)
+        save_yaml(state_dict, self.state_file)
         logger.info(f"Saved pipeline state: stage={self.state.stage}, completed={self.state.completed_stages}")
 
     def load_state(self) -> bool:
@@ -96,7 +98,7 @@ class SPXQueryPipeline:
             return False
 
         try:
-            state_dict = load_json(self.state_file)
+            state_dict = load_yaml(self.state_file)
             self.state = PipelineState.from_dict(state_dict)
             logger.info(f"Loaded pipeline state: stage={self.state.stage}, completed={self.state.completed_stages}")
             return True
@@ -154,7 +156,7 @@ class SPXQueryPipeline:
         str
             Status message describing completed and pending stages
         """
-        all_stages = self.state.pipeline_stages
+        all_stages = self.config.pipeline_stages
         completed = self.state.completed_stages
         pending = [s for s in all_stages if s not in completed]
 
@@ -199,15 +201,19 @@ class SPXQueryPipeline:
 
         # Save updated query summary with actual total size
         query_info = {
-            "source": {"ra": self.config.source.ra, "dec": self.config.source.dec, "name": self.config.source.name},
+            "source": {
+                "ra": float(self.config.query.source.ra),
+                "dec": float(self.config.query.source.dec),
+                "name": self.config.query.source.name,
+            },
             "query_time": self.state.query_results.query_time.isoformat(),
             "n_observations": len(self.state.query_results),
-            "time_span_days": self.state.query_results.time_span_days,
-            "total_size_gb": actual_total_gb,
+            "time_span_days": float(self.state.query_results.time_span_days),
+            "total_size_gb": float(actual_total_gb),
             "total_size_gb_estimated": False,  # Now using actual sizes
             "band_counts": self.state.query_results.band_counts,
         }
-        save_json(query_info, self.results_dir / "query_summary.json")
+        save_yaml(query_info, self.results_dir / "query_summary.yaml")
 
     def run_full_pipeline(self, skip_existing_downloads: bool = True) -> None:
         """
@@ -219,10 +225,10 @@ class SPXQueryPipeline:
             If True, skip already downloaded files. If False, re-download everything.
         """
         logger.info("Starting full pipeline execution")
-        logger.info(f"Pipeline stages: {self.state.pipeline_stages}")
+        logger.info(f"Pipeline stages: {self.config.pipeline_stages}")
 
         # Execute each stage in order
-        for stage in self.state.pipeline_stages:
+        for stage in self.config.pipeline_stages:
             if stage == "query":
                 self.run_query()
             elif stage == "download":
@@ -244,7 +250,7 @@ class SPXQueryPipeline:
 
         # Query SPHEREx archive with cutout size for accurate file size estimation
         query_results = query_spherex_observations(
-            self.config.source, self.config.bands, cutout_size=self.config.cutout_size
+            self.config.query.source, self.config.query.bands, cutout_size=self.config.download.cutout_size
         )
 
         # Print summary
@@ -252,15 +258,19 @@ class SPXQueryPipeline:
 
         # Save query results
         query_info = {
-            "source": {"ra": self.config.source.ra, "dec": self.config.source.dec, "name": self.config.source.name},
+            "source": {
+                "ra": float(self.config.query.source.ra),
+                "dec": float(self.config.query.source.dec),
+                "name": self.config.query.source.name,
+            },
             "query_time": query_results.query_time.isoformat(),
             "n_observations": len(query_results),
-            "time_span_days": query_results.time_span_days,
-            "total_size_gb": query_results.total_size_gb,
+            "time_span_days": float(query_results.time_span_days),
+            "total_size_gb": float(query_results.total_size_gb),
             "total_size_gb_estimated": True,  # Mark as estimated
             "band_counts": query_results.band_counts,
         }
-        save_json(query_info, self.results_dir / "query_summary.json")
+        save_yaml(query_info, self.results_dir / "query_summary.yaml")
 
         # Update state
         self.state.query_results = query_results
@@ -291,9 +301,12 @@ class SPXQueryPipeline:
             url = obs.download_url  # Base URL from query
 
             # Append cutout parameters if specified
-            if self.config.cutout_size:
+            if self.config.download.cutout_size:
                 cutout_params = format_cutout_url_params(
-                    self.config.cutout_size, self.config.cutout_center, self.config.source.ra, self.config.source.dec
+                    self.config.download.cutout_size,
+                    self.config.download.cutout_center,
+                    self.config.query.source.ra,
+                    self.config.query.source.dec,
                 )
                 url = url + cutout_params
                 logger.debug(f"Added cutout to {obs.obs_id}: {cutout_params}")
@@ -309,7 +322,11 @@ class SPXQueryPipeline:
 
         # Download files
         download_results = parallel_download(
-            download_info, self.data_dir, max_workers=self.config.max_download_workers, skip_existing=skip_existing
+            download_info,
+            self.data_dir,
+            max_workers=self.config.download.max_download_workers,
+            skip_existing=skip_existing,
+            download_config=self.config.download,
         )
 
         # Print summary
@@ -347,14 +364,11 @@ class SPXQueryPipeline:
         logger.info(f"Processing {len(self.state.downloaded_files)} FITS files")
 
         # Process all files
-        # Convert diameter to radius for photometry function
+        # All parameters (aperture sizing, subtract_zodi, max_workers, etc.) come from config
         photometry_results = process_all_observations(
             self.state.downloaded_files,
-            self.config.source,
-            aperture_radius=self.config.aperture_diameter / 2.0,  # Convert diameter to radius
-            subtract_zodi=True,
-            max_workers=self.config.max_processing_workers,
-            photometry_config=self.config.advanced.photometry,  # Pass advanced photometry config
+            self.config.query.source,
+            photometry_config=self.config.photometry,
         )
 
         if not photometry_results:
@@ -365,7 +379,7 @@ class SPXQueryPipeline:
             return
 
         # Generate light curve
-        df = generate_lightcurve_dataframe(photometry_results, self.config.source)
+        df = generate_lightcurve_dataframe(photometry_results, self.config.query.source)
 
         # Save light curve CSV
         csv_path = self.results_dir / "lightcurve.csv"
@@ -406,17 +420,17 @@ class SPXQueryPipeline:
 
         # Filter photometry results by configured bands
         photometry_results = self.state.photometry_results
-        if self.config.bands is not None:
+        if self.config.query.bands is not None:
             # Only keep results for bands in config
             original_count = len(photometry_results)
-            photometry_results = [r for r in photometry_results if r.band in self.config.bands]
+            photometry_results = [r for r in photometry_results if r.band in self.config.query.bands]
             logger.info(
-                f"Filtered photometry results by bands {self.config.bands}: "
+                f"Filtered photometry results by bands {self.config.query.bands}: "
                 f"{original_count} -> {len(photometry_results)} measurements"
             )
 
             if not photometry_results:
-                logger.warning(f"No photometry results match configured bands {self.config.bands}")
+                logger.warning(f"No photometry results match configured bands {self.config.query.bands}")
                 self.state.stage = "complete"
                 self.mark_stage_complete("visualization")
                 self.save_state()
@@ -428,11 +442,11 @@ class SPXQueryPipeline:
             photometry_results,  # Use filtered results
             plot_path,
             apply_quality_filters=True,
-            sigma_threshold=self.config.sigma_threshold,
-            bad_flags=self.config.bad_flags,
-            use_magnitude=self.config.use_magnitude,
-            show_errorbars=self.config.show_errorbars,
-            visualization_config=self.config.advanced.visualization,  # Pass advanced visualization config
+            sigma_threshold=self.config.visualization.sigma_threshold,
+            bad_flags=self.config.photometry.bad_flags,
+            use_magnitude=self.config.visualization.use_magnitude,
+            show_errorbars=self.config.visualization.show_errorbars,
+            visualization_config=self.config.visualization,  # Pass visualization config
         )
 
         # Update state
@@ -461,7 +475,7 @@ class SPXQueryPipeline:
         self.print_status()
 
         # Get remaining stages
-        remaining_stages = [s for s in self.state.pipeline_stages if s not in self.state.completed_stages]
+        remaining_stages = [s for s in self.config.pipeline_stages if s not in self.state.completed_stages]
 
         if not remaining_stages:
             logger.info("All stages already complete")
@@ -540,7 +554,7 @@ def run_pipeline(
     sigma_threshold : float
         Minimum SNR (flux/flux_err) for quality control (default: 5.0)
     bad_flags : List[int], optional
-        List of bad flag bit positions to reject (default: [0, 1, 2, 6, 7, 9, 10, 11, 15])
+        List of bad flag bit positions to reject (default: [0, 1, 2, 6, 7, 9, 10, 11, 14, 15, 17, 19])
     use_magnitude : bool
         If True, plot AB magnitude instead of flux (default: False)
     show_errorbars : bool
@@ -571,24 +585,74 @@ def run_pipeline(
     from ..core.config import Source
 
     source = Source(ra=ra, dec=dec, name=source_name)
-    config = QueryConfig(
-        source=source,
-        output_dir=output_dir or Path.cwd(),
-        bands=bands,
-        aperture_diameter=aperture_diameter,
-        max_download_workers=max_download_workers,
-        max_processing_workers=max_processing_workers,
-        cutout_size=cutout_size,
-        cutout_center=cutout_center,
-        sigma_threshold=sigma_threshold,
-        bad_flags=bad_flags if bad_flags is not None else [0, 1, 2, 6, 7, 9, 10, 11, 15],
-        use_magnitude=use_magnitude,
-        show_errorbars=show_errorbars,
-        advanced_params_file=advanced_params_file,  # Pass advanced params file
-    )
+
+    # Load advanced parameters from file if provided
+    if advanced_params_file:
+        from ..utils.params import load_advanced_config
+
+        config = load_advanced_config(Path(advanced_params_file))
+
+        # Override with explicitly provided parameters
+        # Build update dict only for non-default parameters
+        updates = {}
+        updates["source"] = source  # Always use provided source
+        updates["output_dir"] = output_dir or Path.cwd()
+
+        if bands is not None:
+            updates["bands"] = bands
+        if aperture_diameter != 3.0:  # Non-default
+            updates["aperture_diameter"] = aperture_diameter
+        if max_download_workers != 4:  # Non-default
+            updates["max_download_workers"] = max_download_workers
+        if max_processing_workers != 10:  # Non-default
+            updates["max_processing_workers"] = max_processing_workers
+        if cutout_size is not None:
+            updates["cutout_size"] = cutout_size
+        if cutout_center is not None:
+            updates["cutout_center"] = cutout_center
+        if sigma_threshold != 5.0:  # Non-default
+            updates["sigma_threshold"] = sigma_threshold
+        if bad_flags is not None:
+            updates["bad_flags"] = bad_flags
+        if use_magnitude != False:  # Non-default
+            updates["use_magnitude"] = use_magnitude
+        if show_errorbars != True:  # Non-default
+            updates["show_errorbars"] = show_errorbars
+
+        # Update query config source and output_dir directly
+        config.query.source = source
+        config.query.output_dir = output_dir or Path.cwd()
+        if bands is not None:
+            config.query.bands = bands
+
+        # Apply other updates via intelligent routing
+        if len(updates) > 3:  # More than just source, output_dir, bands
+            remaining_updates = {k: v for k, v in updates.items() if k not in ["source", "output_dir", "bands"]}
+            if remaining_updates:
+                config.update(**remaining_updates)
+    else:
+        # No advanced params file - create with defaults and provided parameters
+        config = AdvancedConfig.create(
+            source=source,
+            output_dir=output_dir or Path.cwd(),
+            bands=bands,
+            aperture_diameter=aperture_diameter,
+            max_download_workers=max_download_workers,
+            max_processing_workers=max_processing_workers,
+            cutout_size=cutout_size,
+            cutout_center=cutout_center,
+            sigma_threshold=sigma_threshold,
+            bad_flags=bad_flags if bad_flags is not None else [0, 1, 2, 6, 7, 9, 10, 11, 14, 15, 17, 19],
+            use_magnitude=use_magnitude,
+            show_errorbars=show_errorbars,
+        )
+
+    # Set pipeline stages if provided
+    if pipeline_stages is not None:
+        config.pipeline_stages = pipeline_stages
 
     # Create and run pipeline
-    pipeline = SPXQueryPipeline(config, pipeline_stages=pipeline_stages)
+    pipeline = SPXQueryPipeline(config)
 
     if resume:
         pipeline.resume(skip_existing_downloads=skip_existing_downloads)

@@ -12,9 +12,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def export_default_parameters(output_path: Union[str, Path], filename: str = "spxquery_default_params.json") -> Path:
+def export_default_parameters(output_path: Union[str, Path], filename: str = "spxquery_default_params.yaml") -> Path:
     """
-    Export default advanced parameters to JSON file.
+    Export default advanced parameters to YAML file with comments.
 
     This creates a template file that users can modify to customize
     photometry, visualization, and download parameters. The template
@@ -23,12 +23,12 @@ def export_default_parameters(output_path: Union[str, Path], filename: str = "sp
     Parameters
     ----------
     output_path : str or Path
-        Directory to save the parameter file, or full path to JSON file.
+        Directory to save the parameter file, or full path to YAML file.
         If directory, saves as {output_path}/{filename}.
-        If file path ending in .json, uses that path directly.
+        If file path ending in .yaml/.yml, uses that path directly.
     filename : str, optional
         Filename to use if output_path is a directory.
-        Default: "spxquery_default_params.json"
+        Default: "spxquery_default_params.yaml"
 
     Returns
     -------
@@ -39,34 +39,38 @@ def export_default_parameters(output_path: Union[str, Path], filename: str = "sp
     --------
     >>> # Save to directory with default filename
     >>> params_file = export_default_parameters("my_folder")
-    >>> # Returns: Path("my_folder/spxquery_default_params.json")
+    >>> # Returns: Path("my_folder/spxquery_default_params.yaml")
 
     >>> # Save to specific file
-    >>> params_file = export_default_parameters("my_folder/custom_params.json")
-    >>> # Returns: Path("my_folder/custom_params.json")
+    >>> params_file = export_default_parameters("my_folder/custom_params.yaml")
+    >>> # Returns: Path("my_folder/custom_params.yaml")
 
     >>> # Save to current directory
     >>> params_file = export_default_parameters(".")
-    >>> # Returns: Path("./spxquery_default_params.json")
+    >>> # Returns: Path("./spxquery_default_params.yaml")
     """
-    from ..core.config import AdvancedConfig
+    from ..core.config import AdvancedConfig, QueryConfig, Source
 
     output_path = Path(output_path)
 
     # Determine final file path
-    if output_path.suffix == ".json":
-        # Full path to JSON file provided
+    if output_path.suffix in [".yaml", ".yml"]:
+        # Full path to YAML file provided
         final_path = output_path
     else:
         # Directory provided, append filename
         output_path.mkdir(parents=True, exist_ok=True)
         final_path = output_path / filename
 
+    # Build up default Source and QueryConfig
+    source = Source(ra=0.0, dec=0.0, name="MySource")
+    query_config = QueryConfig(source=source, output_dir=output_path)
+
     # Create default config
-    default_config = AdvancedConfig()
+    default_config = AdvancedConfig(query=query_config)
 
     # Save to file
-    default_config.to_json_file(final_path)
+    default_config.to_yaml_file(final_path)
 
     logger.info(f"Default parameters exported to {final_path}")
     print(f"\n{'=' * 70}")
@@ -80,7 +84,7 @@ def export_default_parameters(output_path: Union[str, Path], filename: str = "sp
     print("\nNOTE: This template does NOT include source information (ra/dec).")
     print("      You must provide source coordinates when running the pipeline.")
     print("\nNext steps:")
-    print(f"  1. Edit {final_path.name} to customize parameters")
+    print(f"  1. Edit {final_path.name} to customize parameters (YAML format with comments)")
     print("  2. Use the file in your pipeline with:")
     print(f"     • QueryConfig(source=..., advanced_params_file='{final_path}')")
     print(f"     • run_pipeline(ra=..., dec=..., advanced_params_file='{final_path}')")
@@ -91,12 +95,12 @@ def export_default_parameters(output_path: Union[str, Path], filename: str = "sp
 
 def load_advanced_config(filepath: Path) -> "AdvancedConfig":
     """
-    Load advanced configuration from JSON file.
+    Load advanced configuration from YAML file.
 
     Parameters
     ----------
     filepath : Path
-        Path to JSON parameter file
+        Path to YAML parameter file
 
     Returns
     -------
@@ -117,7 +121,7 @@ def load_advanced_config(filepath: Path) -> "AdvancedConfig":
         raise FileNotFoundError(f"Parameter file not found: {filepath}")
 
     try:
-        config = AdvancedConfig.from_json_file(filepath)
+        config = AdvancedConfig.from_yaml_file(filepath)
         logger.info(f"Loaded advanced parameters from {filepath}")
         return config
     except Exception as e:

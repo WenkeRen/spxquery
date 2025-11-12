@@ -16,7 +16,7 @@ except PackageNotFoundError:
 
 __author__ = "SPXQuery Team"
 
-from .core.config import QueryConfig, Source
+from .core.config import AdvancedConfig, QueryConfig, Source
 from .core.pipeline import SPXQueryPipeline
 
-__all__ = ["Source", "QueryConfig", "SPXQueryPipeline"]
+__all__ = ["Source", "AdvancedConfig", "QueryConfig", "SPXQueryPipeline"]

@@ -6,24 +6,27 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 from urllib.request import Request, urlopen
 
 from tqdm import tqdm
 
 from .config import DownloadResult, ObservationInfo
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from .config import DownloadConfig
 
-# Download configuration
-CHUNK_SIZE = 8192  # 8KB chunks
-DEFAULT_TIMEOUT = 300  # 5 minutes
-MAX_RETRIES = 3
-RETRY_DELAY = 5  # seconds
+logger = logging.getLogger(__name__)
 
 
 def download_file(
-    url: str, output_path: Path, timeout: int = DEFAULT_TIMEOUT, retries: int = MAX_RETRIES
+    url: str,
+    output_path: Path,
+    timeout: int = 300,
+    retries: int = 3,
+    retry_delay: int = 5,
+    chunk_size: int = 8192,
+    user_agent: str = "SPXQuery/0.1.0",
 ) -> DownloadResult:
     """
     Download a single file with retry logic.
@@ -35,9 +38,15 @@ def download_file(
     output_path : Path
         Local path to save file
     timeout : int
-        Download timeout in seconds
+        Download timeout in seconds (default: 300)
     retries : int
-        Number of retry attempts
+        Number of retry attempts (default: 3)
+    retry_delay : int
+        Delay between retry attempts in seconds (default: 5)
+    chunk_size : int
+        Download chunk size in bytes (default: 8192)
+    user_agent : str
+        User agent string for HTTP requests (default: "SPXQuery/0.1.0")
 
     Returns
     -------
@@ -53,7 +62,7 @@ def download_file(
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Set up request with headers
-            request = Request(url, headers={"User-Agent": "SPXQuery/0.1.0"})
+            request = Request(url, headers={"User-Agent": user_agent})
 
             # Open connection
             with urlopen(request, timeout=timeout) as response:
@@ -64,7 +73,7 @@ def download_file(
                 with open(output_path, "wb") as f:
                     downloaded = 0
                     while True:
-                        chunk = response.read(CHUNK_SIZE)
+                        chunk = response.read(chunk_size)
                         if not chunk:
                             break
                         f.write(chunk)
@@ -87,7 +96,7 @@ def download_file(
 
             attempt += 1
             if attempt <= retries:
-                time.sleep(RETRY_DELAY)
+                time.sleep(retry_delay)
 
     # All attempts failed
     return DownloadResult(
@@ -101,6 +110,7 @@ def parallel_download(
     max_workers: int = 4,
     show_progress: bool = True,
     skip_existing: bool = True,
+    download_config: Optional["DownloadConfig"] = None,
 ) -> List[DownloadResult]:
     """
     Download multiple files in parallel with progress tracking.
@@ -112,18 +122,38 @@ def parallel_download(
     output_dir : Path
         Directory to save downloaded files
     max_workers : int
-        Maximum number of parallel downloads
+        Maximum number of parallel downloads (default: 4)
     show_progress : bool
-        Whether to show progress bar
+        Whether to show progress bar (default: True)
     skip_existing : bool
-        If True, skip files that already exist. If False, re-download all files.
+        If True, skip files that already exist. If False, re-download all files (default: True)
+    download_config : DownloadConfig, optional
+        Download configuration with timeout, retries, etc. If None, uses defaults.
 
     Returns
     -------
     List[DownloadResult]
         Results for all download attempts
+
+    Notes
+    -----
+    Priority: explicit max_workers parameter > download_config.max_download_workers > default
     """
+    from .config import DownloadConfig
+
+    # Use default config if none provided
+    if download_config is None:
+        download_config = DownloadConfig()
+
+    # Extract download parameters from config
+    timeout = download_config.timeout
+    retries = download_config.max_retries
+    retry_delay = download_config.retry_delay
+    chunk_size = download_config.chunk_size
+    user_agent = download_config.user_agent
+
     logger.info(f"Starting parallel download of {len(download_info)} files")
+    logger.info(f"Download settings: timeout={timeout}s, retries={retries}, workers={max_workers}")
 
     # Create output directories
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -159,8 +189,10 @@ def parallel_download(
                     pbar.update(1)
                 continue
 
-            # Submit download task
-            future = executor.submit(download_file, url, output_path)
+            # Submit download task with config parameters
+            future = executor.submit(
+                download_file, url, output_path, timeout, retries, retry_delay, chunk_size, user_agent
+            )
             future_to_info[future] = (obs, url)
 
         # Process completed downloads

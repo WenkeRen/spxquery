@@ -386,7 +386,7 @@ def create_spectrum_plot(
         all_y_values.extend([p.flux + p.flux_error for p in rejected_upper_limits])
 
     if all_y_values:
-        y_min, y_max = calculate_smart_ylimits(all_y_values, percentile_range=(1.0, 99.0))
+        y_min, y_max = calculate_smart_ylimits(all_y_values, percentile_range=(0.1, 99.9))
         # For magnitude plots, axis is inverted so we need to reverse the order
         if use_magnitude:
             ax.set_ylim(y_max, y_min)  # Reversed for inverted axis
@@ -618,7 +618,7 @@ def create_lightcurve_plot(
             all_y_values.append(result.flux)
 
     if all_y_values:
-        y_min, y_max = calculate_smart_ylimits(all_y_values, percentile_range=(1.0, 99.0))
+        y_min, y_max = calculate_smart_ylimits(all_y_values, percentile_range=(0.1, 99.9))
         # For magnitude plots, axis is inverted so we need to reverse the order
         if use_magnitude:
             ax.set_ylim(y_max, y_min)  # Reversed for inverted axis
@@ -667,7 +667,7 @@ def create_combined_plot(
         Minimum SNR (flux/flux_err) for quality control (default: 5.0)
     bad_flags : List[int], optional
         List of bad flag bit positions to reject
-        Default: [0, 1, 2, 6, 7, 9, 10, 11, 15]
+        Default: [0, 1, 2, 6, 7, 9, 10, 11, 14, 15, 17, 19]
     use_magnitude : bool
         If True, plot AB magnitude instead of flux (default: False)
     show_errorbars : bool
@@ -701,7 +701,7 @@ def create_combined_plot(
         from ..utils.helpers import check_flag_bits, create_flag_mask
 
         if bad_flags is None:
-            bad_flags = [0, 1, 2, 6, 7, 9, 10, 11, 15]
+            bad_flags = [0, 1, 2, 6, 7, 9, 10, 11, 14, 15, 17, 19]
 
         bad_flags_mask = create_flag_mask(bad_flags)
 

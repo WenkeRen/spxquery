@@ -1,0 +1,77 @@
+# SPXQuery Advanced Configuration
+# Edit values below and load via advanced_params_file parameter
+
+query:
+  source:
+    ra: 0.0
+    dec: 0.0
+    name: MySource
+  output_dir: demo_data/cloverleaf
+  bands: null
+photometry:
+  aperture_method: fwhm
+  aperture_diameter: 3.0
+  fwhm_multiplier: 2.5
+  max_processing_workers: 10
+  bad_flags:
+  - 0
+  - 1
+  - 2
+  - 6
+  - 7
+  - 9
+  - 10
+  - 11
+  - 14
+  - 15
+  - 17
+  - 19
+  annulus_inner_offset: 1.414
+  min_annulus_area: 10
+  max_outer_radius: 5.0
+  min_usable_pixels: 10
+  bg_sigma_clip_sigma: 3.0
+  bg_sigma_clip_maxiters: 3
+  subtract_zodi: true
+  zodi_scale_min: 0.0
+  zodi_scale_max: 10.0
+  pixel_scale_fallback: 6.2
+  max_annulus_attempts: 5
+  annulus_expansion_step: 0.5
+  background_method: annulus
+  window_size: 50
+visualization:
+  sigma_threshold: 5.0
+  use_magnitude: false
+  show_errorbars: true
+  wavelength_cmap: rainbow
+  date_cmap: viridis
+  sigma_clip_sigma: 3.0
+  sigma_clip_maxiters: 10
+  ylim_percentile_min: 1.0
+  ylim_percentile_max: 99.0
+  ylim_padding_fraction: 0.1
+  marker_size_good: 1.5
+  marker_size_rejected: 2.0
+  marker_size_upper_limit: 3.0
+  errorbar_alpha: 0.2
+  marker_alpha: 0.9
+  errorbar_linewidth: 0.5
+  figsize:
+  - 10
+  - 8
+  dpi: 150
+download:
+  max_download_workers: 4
+  cutout_size: null
+  cutout_center: null
+  chunk_size: 8192
+  timeout: 300
+  max_retries: 3
+  retry_delay: 5
+  user_agent: SPXQuery/0.2.0
+pipeline_stages:
+- query
+- download
+- processing
+- visualization

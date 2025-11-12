@@ -5,24 +5,106 @@ Aperture photometry extraction for SPHEREx data.
 import logging
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import numpy as np
 from photutils.aperture import CircularAperture, aperture_photometry
 from tqdm import tqdm
 
 from ..core.config import PhotometryResult, Source
-from .fits_handler import (
-    create_background_mask,
+from ..utils.spherex_mef import (
     get_pixel_coordinates,
     get_pixel_scale_at_position,
     get_wavelength_at_position,
     read_spherex_mef,
     subtract_zodiacal_background,
 )
+from ..core.config import PhotometryConfig
 from .magnitudes import calculate_ab_magnitude_from_jy
+from .background import estimate_local_background
 
 logger = logging.getLogger(__name__)
+
+
+def repair_variance_for_flagged_pixels(
+    variance: np.ndarray, flags: np.ndarray
+) -> np.ndarray:
+    """
+    Repair NaN variance values for pixels with non-zero flags.
+
+    This function validates that NaN variance correlates with flagged pixels
+    (expected behavior) and provides a reasonable variance estimate using
+    the median of valid variance values across the full image.
+
+    Parameters
+    ----------
+    variance : np.ndarray
+        Variance array that may contain NaN values
+    flags : np.ndarray
+        Flag array (bitmap) indicating pixel quality issues
+
+    Returns
+    -------
+    np.ndarray
+        Repaired variance array with NaN replaced for flagged pixels only
+
+    Raises
+    ------
+    ValueError
+        If NaN variance is found in pixels with zero flags (unexpected condition)
+
+    Notes
+    -----
+    - Only repairs NaN variance if the pixel has non-zero flags
+    - Uses median of valid variance values as replacement
+    - Keeps NaN for unflagged pixels to trigger errors (data quality issue)
+    """
+    # Create a copy to avoid modifying the original
+    repaired_variance = variance.copy()
+
+    # Find pixels with NaN variance
+    nan_mask = np.isnan(variance)
+
+    if not nan_mask.any():
+        # No NaN values, return as-is
+        return repaired_variance
+
+    # Check if NaN pixels have non-zero flags
+    nan_with_zero_flags = nan_mask & (flags == 0)
+
+    if nan_with_zero_flags.any():
+        # Unexpected: NaN variance without flags
+        n_bad = nan_with_zero_flags.sum()
+        logger.error(
+            f"Found {n_bad} pixels with NaN variance but zero flags. "
+            f"This indicates unexpected data quality issues."
+        )
+        raise ValueError(
+            f"Found {n_bad} pixels with NaN variance but zero flags. "
+            f"Expected flagged pixels to have NaN variance, not unflagged pixels."
+        )
+
+    # All NaN pixels have non-zero flags (expected condition)
+    # Calculate median of valid variance values
+    valid_variance_mask = ~nan_mask & (variance > 0)
+
+    if not valid_variance_mask.any():
+        # No valid variance values to estimate from
+        logger.error("No valid variance values found in image for median estimation")
+        raise ValueError("Cannot repair variance: no valid variance values in image")
+
+    median_variance = np.median(variance[valid_variance_mask])
+
+    # Replace NaN values with median variance
+    n_repaired = nan_mask.sum()
+    repaired_variance[nan_mask] = median_variance
+
+    logger.info(
+        f"Repaired {n_repaired} pixels with NaN variance using median variance "
+        f"({median_variance:.6e}). All repaired pixels have non-zero flags."
+    )
+
+    return repaired_variance
 
 
 def extract_aperture_photometry(
@@ -34,9 +116,9 @@ def extract_aperture_photometry(
     Parameters
     ----------
     image : np.ndarray
-        Image data in MJy/sr
+        Image data (surface brightness units)
     error : np.ndarray
-        Error array in MJy/sr
+        Error array (same units as image)
     x, y : float
         Pixel coordinates (0-based)
     radius : float
@@ -45,9 +127,9 @@ def extract_aperture_photometry(
     Returns
     -------
     flux : float
-        Integrated flux in MJy/sr
+        Integrated flux (same units as image, summed over aperture)
     flux_error : float
-        Flux uncertainty in MJy/sr
+        Flux uncertainty (same units as image)
     """
     # Create aperture
     aperture = CircularAperture((x, y), r=radius)
@@ -97,221 +179,6 @@ def process_flags_in_aperture(flags: np.ndarray, x: float, y: float, radius: flo
     return int(combined_flag)
 
 
-def determine_annulus_radii(
-    aperture_radius: float,
-    inner_radius: Optional[float] = None,
-    outer_radius: Optional[float] = None,
-    min_annulus_area_pixels: int = 10,
-    max_outer_radius: float = 5.0,
-    annulus_inner_offset: float = 1.414,
-) -> Tuple[float, float]:
-    """
-    Determine inner and outer radii for background annulus.
-
-    Parameters
-    ----------
-    aperture_radius : float
-        Source aperture radius in pixels
-    inner_radius : float, optional
-        Fixed inner radius. If None, calculated automatically
-    outer_radius : float, optional
-        Fixed outer radius. If None, calculated automatically
-    min_annulus_area_pixels : int
-        Minimum annulus area in pixels
-    max_outer_radius : float
-        Maximum allowed outer radius
-    annulus_inner_offset : float
-        Offset from aperture edge to inner annulus radius
-
-    Returns
-    -------
-    inner_radius, outer_radius : float, float
-        Annulus inner and outer radii in pixels
-    """
-    # Calculate inner radius (offset pixels larger than aperture radius)
-    if inner_radius is None:
-        inner_radius = aperture_radius + annulus_inner_offset
-
-    # Calculate outer radius to achieve minimum annulus area
-    if outer_radius is None:
-        # Area of annulus = π(r_out² - r_in²)
-        # Solve for r_out: r_out = sqrt(area/π + r_in²)
-        target_outer_radius = np.sqrt(min_annulus_area_pixels / np.pi + inner_radius**2)
-        outer_radius = min(target_outer_radius, max_outer_radius)
-
-    logger.debug(f"Annulus radii: inner={inner_radius:.2f}, outer={outer_radius:.2f}")
-
-    return inner_radius, outer_radius
-
-
-def create_annulus_mask(
-    image_shape: Tuple[int, int], x: float, y: float, inner_radius: float, outer_radius: float
-) -> np.ndarray:
-    """
-    Create boolean mask for annular region.
-
-    Parameters
-    ----------
-    image_shape : tuple
-        Shape of image (ny, nx)
-    x, y : float
-        Center coordinates
-    inner_radius, outer_radius : float
-        Annulus radii in pixels
-
-    Returns
-    -------
-    np.ndarray
-        Boolean mask (True = within annulus)
-    """
-    ny, nx = image_shape
-    yy, xx = np.ogrid[:ny, :nx]
-
-    # Distance from center
-    distances = np.sqrt((xx - x) ** 2 + (yy - y) ** 2)
-
-    # Annulus mask (between inner and outer radii)
-    mask = (distances >= inner_radius) & (distances <= outer_radius)
-
-    return mask
-
-
-def estimate_local_background(
-    image: np.ndarray,
-    variance: np.ndarray,
-    flags: np.ndarray,
-    x: float,
-    y: float,
-    aperture_radius: float,
-    inner_radius: Optional[float] = None,
-    outer_radius: Optional[float] = None,
-    min_usable_pixels: int = 10,
-    max_outer_radius: float = 5.0,
-    bg_sigma_clip_sigma: float = 3.0,
-    bg_sigma_clip_maxiters: int = 3,
-    max_annulus_attempts: int = 5,
-    annulus_expansion_step: float = 0.5,
-    annulus_inner_offset: float = 1.414,
-) -> Tuple[float, float, int]:
-    """
-    Estimate local background using annular region around source.
-
-    Parameters
-    ----------
-    image : np.ndarray
-        Image data
-    variance : np.ndarray
-        Variance array
-    flags : np.ndarray
-        Flag array
-    x, y : float
-        Source coordinates
-    aperture_radius : float
-        Source aperture radius
-    inner_radius, outer_radius : float, optional
-        Annulus radii (calculated if None)
-    min_usable_pixels : int
-        Minimum number of usable pixels required
-    max_outer_radius : float
-        Maximum outer radius
-    bg_sigma_clip_sigma : float
-        Sigma threshold for sigma clipping
-    bg_sigma_clip_maxiters : int
-        Maximum iterations for sigma clipping
-    max_annulus_attempts : int
-        Maximum attempts to expand annulus
-    annulus_expansion_step : float
-        Step size for annulus expansion
-    annulus_inner_offset : float
-        Offset from aperture edge to inner annulus
-
-    Returns
-    -------
-    background_level : float
-        Background level per pixel (MJy/sr)
-    background_error : float
-        Background error per pixel (MJy/sr)
-    n_usable : int
-        Number of usable pixels in annulus
-    """
-    # Determine annulus radii
-    inner_r, outer_r = determine_annulus_radii(
-        aperture_radius, inner_radius, outer_radius, min_usable_pixels, max_outer_radius, annulus_inner_offset
-    )
-
-    # Check if annulus fits within image
-    ny, nx = image.shape
-    max_distance = min(x, y, nx - x, ny - y)
-
-    if outer_r > max_distance:
-        logger.warning(f"Outer radius {outer_r:.2f} exceeds image boundary {max_distance:.2f}")
-        outer_r = max_distance
-
-        # If outer radius was reduced, inner radius might need adjustment too
-        if inner_r >= outer_r:
-            inner_r = outer_r * 0.7  # Make inner radius 70% of outer radius
-
-    # Try progressively larger outer radii until we get enough usable pixels
-    attempt = 0
-
-    while attempt < max_annulus_attempts:
-        # Create annulus mask
-        annulus_mask = create_annulus_mask(image.shape, x, y, inner_r, outer_r)
-
-        # Create clean background mask (no flagged pixels)
-        clean_mask = create_background_mask(flags)
-
-        # Combine masks
-        usable_mask = annulus_mask & clean_mask
-        n_usable = np.sum(usable_mask)
-
-        logger.debug(f"Attempt {attempt + 1}: annulus area={np.sum(annulus_mask)}, usable={n_usable}")
-
-        # Check if we have enough usable pixels
-        if n_usable >= min_usable_pixels:
-            break
-
-        # Expand outer radius if possible
-        if outer_r < max_outer_radius and outer_r < max_distance:
-            new_outer_r = min(outer_r + annulus_expansion_step, max_outer_radius, max_distance)
-            if new_outer_r > outer_r:
-                outer_r = new_outer_r
-                attempt += 1
-                continue
-
-        # Cannot expand further
-        break
-
-    # Extract background pixels
-    if n_usable == 0:
-        logger.error("No usable pixels in background annulus")
-        return 0.0, 0.0, 0
-
-    bg_pixels = image[usable_mask]
-    bg_variance = variance[usable_mask]
-
-    # Calculate background statistics using sigma-clipped mean
-    from astropy.stats import sigma_clipped_stats
-
-    bg_mean, bg_median, bg_std = sigma_clipped_stats(
-        bg_pixels, sigma=bg_sigma_clip_sigma, maxiters=bg_sigma_clip_maxiters
-    )
-
-    # Error on the mean background
-    # Use variance if available, otherwise use std from sigma clipping
-    if np.all(bg_variance > 0):
-        bg_error = np.sqrt(np.mean(bg_variance[bg_variance > 0]))
-    else:
-        bg_error = bg_std / np.sqrt(n_usable)
-
-    logger.debug(
-        f"Background estimate: {bg_mean:.6f} ± {bg_error:.6f} MJy/sr "
-        f"from {n_usable} pixels (r={inner_r:.1f}-{outer_r:.1f})"
-    )
-
-    return float(bg_mean), float(bg_error), n_usable
-
-
 def extract_aperture_photometry_with_background(
     image: np.ndarray,
     variance: np.ndarray,
@@ -319,8 +186,8 @@ def extract_aperture_photometry_with_background(
     x: float,
     y: float,
     aperture_radius: float,
-    inner_radius: Optional[float] = None,
-    outer_radius: Optional[float] = None,
+    background_method: str = "annulus",
+    window_size: Union[int, Tuple[int, int]] = 50,
     min_usable_pixels: int = 10,
     max_outer_radius: float = 5.0,
     bg_sigma_clip_sigma: float = 3.0,
@@ -335,63 +202,88 @@ def extract_aperture_photometry_with_background(
     Parameters
     ----------
     image : np.ndarray
-        Image data in MJy/sr
+        Image data (surface brightness units)
     variance : np.ndarray
-        Variance array in (MJy/sr)²
+        Variance array (surface brightness units squared)
     flags : np.ndarray
         Flag array
     x, y : float
         Source coordinates
     aperture_radius : float
-        Aperture radius in pixels
-    inner_radius, outer_radius : float, optional
-        Background annulus radii
+        Aperture radius in pixels. Used for photometry and for excluding
+        aperture pixels from window background estimation.
+    background_method : str
+        Background estimation method ('annulus' or 'window')
+    window_size : int or tuple of (height, width)
+        Background window size in pixels (for window method).
+        Aperture pixels are automatically excluded.
     min_usable_pixels : int
         Minimum number of usable background pixels
     max_outer_radius : float
-        Maximum outer radius for background annulus
+        Maximum outer radius for background annulus (for annulus method)
     bg_sigma_clip_sigma : float
         Sigma threshold for sigma clipping
     bg_sigma_clip_maxiters : int
         Maximum iterations for sigma clipping
     max_annulus_attempts : int
-        Maximum attempts to expand annulus
+        Maximum attempts to expand annulus (for annulus method)
     annulus_expansion_step : float
-        Step size for annulus expansion
+        Step size for annulus expansion (for annulus method)
     annulus_inner_offset : float
-        Offset from aperture edge to inner annulus
+        Offset from aperture edge to inner annulus (for annulus method)
 
     Returns
     -------
     flux : float
-        Background-subtracted flux (MJy/sr)
+        Background-subtracted flux (same units as image, summed over aperture)
     flux_error : float
-        Flux error (MJy/sr)
+        Flux error (same units as image)
     background : float
-        Background level per pixel (MJy/sr)
+        Background level per pixel (same units as image)
     background_error : float
-        Background error per pixel (MJy/sr)
+        Background error per pixel (same units as image)
     n_bg_pixels : int
         Number of background pixels used
+
+    Notes
+    -----
+    Inner and outer annulus radii are calculated automatically based on aperture_radius
+    and annulus_inner_offset. Not exposed as parameters to keep interface simple.
     """
-    # Estimate local background
-    bg_level, bg_error, n_bg_pixels = estimate_local_background(
-        image,
-        variance,
-        flags,
-        x,
-        y,
-        aperture_radius,
-        inner_radius,
-        outer_radius,
-        min_usable_pixels,
-        max_outer_radius,
-        bg_sigma_clip_sigma,
-        bg_sigma_clip_maxiters,
-        max_annulus_attempts,
-        annulus_expansion_step,
-        annulus_inner_offset,
-    )
+    # Estimate local background using selected method
+    if background_method == "annulus":
+        bg_level, bg_error, n_bg_pixels = estimate_local_background(
+            image,
+            variance,
+            flags,
+            x,
+            y,
+            aperture_radius,
+            min_usable_pixels,
+            max_outer_radius,
+            bg_sigma_clip_sigma,
+            bg_sigma_clip_maxiters,
+            max_annulus_attempts,
+            annulus_expansion_step,
+            annulus_inner_offset,
+        )
+    elif background_method == "window":
+        from .background import estimate_window_background
+
+        bg_level, bg_error, n_bg_pixels = estimate_window_background(
+            image,
+            variance,
+            flags,
+            x,
+            y,
+            window_size,
+            aperture_radius,
+            min_usable_pixels,
+            bg_sigma_clip_sigma,
+            bg_sigma_clip_maxiters,
+        )
+    else:
+        raise ValueError(f"Invalid background_method: {background_method}")
 
     if n_bg_pixels == 0:
         # Return zero flux with high error if no background estimate
@@ -412,7 +304,7 @@ def extract_aperture_photometry_with_background(
 
     # Subtract background
     background_total = bg_level * aperture_area
-    background_error_total = bg_error * np.sqrt(aperture_area)
+    background_error_total = bg_error * aperture_area
 
     flux = raw_flux - background_total
     flux_error = np.sqrt(raw_flux_error**2 + background_error_total**2)
@@ -429,18 +321,16 @@ def extract_aperture_photometry_with_background(
 def extract_source_photometry(
     mef_file: Path,
     source: Source,
-    aperture_radius: float = 1.5,  # 3 pixel diameter = 1.5 pixel radius
-    subtract_zodi: bool = True,
-    inner_radius: Optional[float] = None,
-    outer_radius: Optional[float] = None,
-    photometry_config: Optional["PhotometryConfig"] = None,
+    photometry_config: Optional[PhotometryConfig] = None,
 ) -> Optional[PhotometryResult]:
     """
     Extract photometry for a source from a SPHEREx MEF file with local background subtraction.
 
-    This function performs aperture photometry and properly converts surface brightness
-    (MJy/sr) to flux density (microJansky) using the WCS-derived pixel scale at the
-    source position.
+    This function reads SPHEREx data in uJy/arcsec2 units, performs aperture photometry,
+    and converts to integrated flux density (microJansky) using WCS-derived pixel scales.
+
+    All photometry parameters (aperture sizing, background method, zodiacal subtraction, etc.)
+    are controlled via PhotometryConfig.
 
     Parameters
     ----------
@@ -448,16 +338,8 @@ def extract_source_photometry(
         Path to SPHEREx MEF file
     source : Source
         Source with RA/Dec coordinates
-    aperture_radius : float
-        Aperture radius in pixels (default 1.5 for 3 pixel diameter)
-    subtract_zodi : bool
-        Whether to subtract zodiacal background
-    inner_radius : float, optional
-        Inner radius for background annulus. If None, calculated automatically.
-    outer_radius : float, optional
-        Outer radius for background annulus. If None, calculated automatically.
     photometry_config : PhotometryConfig, optional
-        Advanced photometry configuration. If None, uses defaults.
+        Photometry configuration. If None, uses defaults.
 
     Returns
     -------
@@ -466,25 +348,69 @@ def extract_source_photometry(
 
     Notes
     -----
-    Priority: explicit radius parameters > photometry_config > defaults
+    - Uses read_spherex_mef() with target_unit='uJy/arcsec2' for automatic unit conversion
+    - All parameters come from photometry_config (aperture_method, subtract_zodi, background_method, etc.)
     """
-    from ..core.config import PhotometryConfig
 
     # Use default config if none provided
     if photometry_config is None:
         photometry_config = PhotometryConfig()
 
     try:
-        # Read MEF
-        mef = read_spherex_mef(mef_file)
+        # Read MEF with unit conversion to uJy/arcsec2 for simpler flux calculations
+        mef = read_spherex_mef(mef_file, target_unit='uJy/arcsec2')
+
+        # Repair variance for flagged pixels with NaN values
+        # This validates that NaN variance correlates with flags and provides median estimate
+        mef.variance = repair_variance_for_flagged_pixels(mef.variance, mef.flags)
 
         # Get pixel coordinates
         x, y = get_pixel_coordinates(mef, source.ra, source.dec)
 
+        # Determine aperture radius based on aperture_method
+        # Priority: aperture_method setting > explicit aperture_radius parameter
+
+        if photometry_config.aperture_method == "fwhm":
+            # FWHM-based aperture: calculate from PSF
+            try:
+                fwhm_arcsec = mef.get_psf_fwhm_estimate(x, y)
+
+                # Convert FWHM from arcsec to pixels
+                pixel_scale_arcsec = mef.get_pixel_scale(x, y, fallback=photometry_config.pixel_scale_fallback)
+                fwhm_pixels = fwhm_arcsec / pixel_scale_arcsec
+
+                # Aperture diameter = FWHM × multiplier, then convert to radius
+                aperture_diameter = fwhm_pixels * photometry_config.fwhm_multiplier
+                final_aperture_radius = aperture_diameter / 2.0
+
+                logger.info(
+                    f"FWHM-based aperture: FWHM={fwhm_arcsec:.3f}\" ({fwhm_pixels:.2f}px) "
+                    f"→ diameter={aperture_diameter:.2f}px (radius={final_aperture_radius:.2f}px)"
+                )
+
+            except Exception as e:
+                # FWHM estimation failed, use fallback
+                final_aperture_radius = photometry_config.aperture_diameter / 2.0
+                logger.warning(
+                    f"FWHM estimation failed at ({x:.1f}, {y:.1f}): {e}. "
+                    f"Using config aperture_diameter={photometry_config.aperture_diameter}px as fallback"
+                )
+
+        elif photometry_config.aperture_method == "fixed":
+            # Fixed aperture: use explicit parameter or config value
+            final_aperture_radius = photometry_config.aperture_diameter / 2.0
+            logger.debug(
+                f"Fixed aperture: using config diameter={photometry_config.aperture_diameter}px "
+                f"(radius={final_aperture_radius:.2f}px)"
+            )
+
+        else:
+            raise ValueError(f"Invalid aperture_method: {photometry_config.aperture_method}")
+
         # Check if coordinates are within image with extra margin for background annulus
         ny, nx = mef.image.shape
         max_outer_radius = photometry_config.max_outer_radius  # Maximum annulus outer radius
-        required_margin = max(aperture_radius, max_outer_radius)
+        required_margin = max(final_aperture_radius, max_outer_radius)
 
         if not (required_margin <= x < nx - required_margin and required_margin <= y < ny - required_margin):
             logger.warning(f"Source at ({x:.1f}, {y:.1f}) too close to edge for background annulus in {mef_file.name}")
@@ -494,7 +420,7 @@ def extract_source_photometry(
         wavelength, bandwidth = get_wavelength_at_position(mef, x, y)
 
         # Prepare image (optionally subtract zodiacal light)
-        if subtract_zodi:
+        if photometry_config.subtract_zodi:
             image, zodi_scale = subtract_zodiacal_background(
                 mef.image,
                 mef.zodi,
@@ -508,15 +434,22 @@ def extract_source_photometry(
             image = mef.image
 
         # Extract photometry with local background subtraction
-        flux_mjy_sr, flux_error_mjy_sr, bg_level, bg_error, n_bg_pixels = extract_aperture_photometry_with_background(
+        # Image is in uJy/arcsec2, so flux_sum will be in uJy/arcsec2 (summed over pixels)
+        (
+            flux_sum_uJy_per_arcsec2,
+            flux_error_sum_uJy_per_arcsec2,
+            bg_level,
+            bg_error,
+            n_bg_pixels,
+        ) = extract_aperture_photometry_with_background(
             image,
             mef.variance,
             mef.flags,
             x,
             y,
-            aperture_radius,
-            inner_radius,
-            outer_radius,
+            final_aperture_radius,
+            photometry_config.background_method,
+            photometry_config.window_size,
             photometry_config.min_usable_pixels,
             photometry_config.max_outer_radius,
             photometry_config.bg_sigma_clip_sigma,
@@ -531,31 +464,29 @@ def extract_source_photometry(
             logger.error(f"Background estimation failed for {mef_file.name} - dropping observation")
             return None
 
-        logger.debug(f"Local background: {bg_level:.6f} ± {bg_error:.6f} MJy/sr from {n_bg_pixels} pixels")
+        logger.debug(f"Local background: {bg_level:.6f} ± {bg_error:.6f} uJy/arcsec2 from {n_bg_pixels} pixels")
 
-        # Convert from MJy/sr to microJansky (μJy) for output
+        # Convert from uJy/arcsec2 to microJansky (μJy) for integrated flux
         # The aperture photometry returns a sum: Σ(surface_brightness_i) across pixels
-        # To convert to flux: multiply by solid angle PER PIXEL, not total aperture
+        # To convert to flux: multiply by pixel area in arcsec2
         pixel_scale_arcsec = get_pixel_scale_at_position(mef.spatial_wcs, x, y, photometry_config.pixel_scale_fallback)
-        pixel_solid_angle_sr = (pixel_scale_arcsec / 206265.0) ** 2  # Convert arcsec to radians, then square
+        pixel_area_arcsec2 = pixel_scale_arcsec ** 2  # Area of one pixel in arcsec2
 
-        # Convert: (MJy/sr × pixels) × (sr/pixel) = MJy → Jy → μJy
-        flux_mjy = flux_mjy_sr * pixel_solid_angle_sr
-        flux_error_mjy = flux_error_mjy_sr * pixel_solid_angle_sr
+        # Convert: (uJy/arcsec2 × pixels) × (arcsec2/pixel) = uJy
+        flux_ujy = flux_sum_uJy_per_arcsec2 * pixel_area_arcsec2
+        flux_error_ujy = flux_error_sum_uJy_per_arcsec2 * pixel_area_arcsec2
 
-        flux_jy = flux_mjy * 1e6  # Jansky
-        flux_error_jy = flux_error_mjy * 1e6  # Jansky
-
-        flux_ujy = flux_jy * 1e6  # microJansky (μJy)
-        flux_error_ujy = flux_error_jy * 1e6  # microJansky (μJy)
+        # For magnitude calculation, convert to Jansky
+        flux_jy = flux_ujy / 1e6
+        flux_error_jy = flux_error_ujy / 1e6
 
         logger.debug(
-            f"Unit conversion: {flux_mjy_sr:.6f} MJy/sr·pix → {flux_jy:.6f} Jy → {flux_ujy:.3f} μJy "
-            f"(pixel solid angle = {pixel_solid_angle_sr:.2e} sr/pix)"
+            f"Unit conversion: {flux_sum_uJy_per_arcsec2:.6f} uJy/arcsec2·pix → {flux_ujy:.3f} μJy "
+            f"(pixel area = {pixel_area_arcsec2:.4f} arcsec2/pix)"
         )
 
         # Process flags
-        combined_flag = process_flags_in_aperture(mef.flags, x, y, aperture_radius)
+        combined_flag = process_flags_in_aperture(mef.flags, x, y, final_aperture_radius)
 
         # Extract obs_id from MEF
         obs_id = mef.header.get("OBSID", mef_file.stem)
@@ -607,33 +538,29 @@ def _process_single_file(args):
     Parameters
     ----------
     args : tuple
-        (filepath, source, aperture_radius, subtract_zodi, inner_radius, outer_radius, photometry_config)
+        (filepath, source, photometry_config)
 
     Returns
     -------
     PhotometryResult or None
     """
-    filepath, source, aperture_radius, subtract_zodi, inner_radius, outer_radius, photometry_config = args
-    return extract_source_photometry(
-        filepath, source, aperture_radius, subtract_zodi, inner_radius, outer_radius, photometry_config
-    )
+    filepath, source, photometry_config = args
+    return extract_source_photometry(filepath, source, photometry_config)
 
 
 def process_all_observations(
     file_paths: list[Path],
     source: Source,
-    aperture_radius: float = 1.5,
-    subtract_zodi: bool = True,
-    inner_radius: Optional[float] = None,
-    outer_radius: Optional[float] = None,
-    max_workers: int = 10,
-    photometry_config: Optional["PhotometryConfig"] = None,
+    photometry_config: Optional[PhotometryConfig] = None,
 ) -> list[PhotometryResult]:
     """
     Process photometry for all observation files with local background subtraction.
 
-    Uses WCS-derived pixel scales for accurate unit conversion from MJy/sr to Jansky.
-    Supports both sequential and parallel processing with progress bars.
+    Reads SPHEREx data in uJy/arcsec2 units and converts to integrated flux using
+    WCS-derived pixel scales. Supports both sequential and parallel processing.
+
+    All photometry parameters (aperture sizing, background method, zodiacal subtraction,
+    parallel processing workers, etc.) are controlled via PhotometryConfig.
 
     Parameters
     ----------
@@ -641,25 +568,14 @@ def process_all_observations(
         List of MEF file paths
     source : Source
         Target source
-    aperture_radius : float
-        Aperture radius in pixels
-    subtract_zodi : bool
-        Whether to subtract zodiacal background
-    inner_radius : float, optional
-        Inner radius for background annulus
-    outer_radius : float, optional
-        Outer radius for background annulus
-    max_workers : int
-        Number of worker processes (default: 10). If 1 or invalid, runs sequentially.
     photometry_config : PhotometryConfig, optional
-        Advanced photometry configuration. If None, uses defaults.
+        Photometry configuration. If None, uses defaults.
 
     Returns
     -------
     list[PhotometryResult]
-        List of photometry results with proper unit conversion
+        List of photometry results with flux in microJansky (μJy)
     """
-    from ..core.config import PhotometryConfig
 
     # Use default config if none provided
     if photometry_config is None:
@@ -669,13 +585,14 @@ def process_all_observations(
 
     # Prepare arguments for processing
     args_list = [
-        (filepath, source, aperture_radius, subtract_zodi, inner_radius, outer_radius, photometry_config)
+        (filepath, source, photometry_config)
         for filepath in file_paths
     ]
 
     results = []
 
-    # Determine processing mode
+    # Determine processing mode based on config
+    max_workers = photometry_config.max_processing_workers
     use_multiprocessing = max_workers > 1 and len(file_paths) > 1
 
     if use_multiprocessing:

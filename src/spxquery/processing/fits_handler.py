@@ -273,8 +273,6 @@ def get_flag_info(flag_value: int) -> Dict[str, bool]:
         "TRANSIENT": 0,
         "OVERFLOW": 1,
         "SUR_ERROR": 2,
-        "PHANTOM": 4,
-        "REFERENCE": 5,
         "NONFUNC": 6,
         "DICHROIC": 7,
         "MISSING_DATA": 9,

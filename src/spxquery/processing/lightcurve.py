@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 import pandas as pd
 
 from ..core.config import PhotometryResult, Source
-from ..processing.fits_handler import format_flag_binary
+from ..utils.spherex_mef import format_flag_binary
 
 logger = logging.getLogger(__name__)
 
