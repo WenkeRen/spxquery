@@ -17,8 +17,7 @@ Query the IRSA SPHEREx archive using TAP (Table Access Protocol).
 - Saves query results and metadata
 
 **Output:**
-- `results/query_summary.json` - Observation metadata, time span, data size
-- `results/download_urls.json` - Cached datalink URLs for downloads
+- `results/query_summary.yaml` - Observation metadata, time span, data size
 
 **Key features:**
 - Automatic coordinate matching within search radius
@@ -51,17 +50,21 @@ Extract aperture photometry from FITS files.
 
 **What it does:**
 - Parses Multi-Extension FITS (MEF) structure
-- Extracts flux using circular aperture photometry
-- Estimates and subtracts zodiacal background
+- Extracts flux using circular aperture photometry (fixed or FWHM-based sizing)
+- Estimates background using annulus or window method
+- Subtracts zodiacal background from ZODI extension
 - Handles pixel flags for quality assessment
+- Repairs variance for flagged pixels with valid flux
 - Computes flux uncertainties from variance maps
 
 **Output:**
 - `results/photometry.json` - Per-observation photometry results
-- Photometry metadata (aperture size, background estimation)
+- Photometry metadata (aperture size, background estimation method)
 
 **Key features:**
-- Automatic background annulus sizing
+- **Adaptive apertures**: FWHM-based sizing with PSF extraction (optional)
+- **Dual background methods**: Annulus (traditional) or window (crowded fields)
+- **Variance repair**: Automatic handling of NaN variance for flagged pixels
 - Zodiacal light subtraction (from ZODI extension)
 - Pixel flag tracking (FLAGS extension)
 - Spectral WCS handling for wavelength extraction
@@ -128,7 +131,7 @@ The pipeline automatically checks dependencies - you cannot run `processing` bef
 
 ### Resumable Execution
 
-The pipeline saves state after each stage to `{source_name}.json`. Resume from interruptions:
+The pipeline saves state after each stage to `{source_name}.yaml`. Resume from interruptions:
 
 ```python
 # Load configuration from saved state
@@ -176,21 +179,31 @@ This is useful for:
 
 ## State Persistence
 
-State files (`{source_name}.json`) contain:
+State files (`{source_name}.yaml`) contain:
 
-```json
-{
-  "stage": "complete",
-  "completed_stages": ["query", "download", "processing", "visualization"],
-  "pipeline_stages": ["query", "download", "processing", "visualization"],
-  "query_results": {
-    "observations": [...],
-    "time_span_days": 33.1,
-    "total_size_gb": 0.51
-  },
-  "downloaded_files": [...],
-  "photometry_results": [...]
-}
+```yaml
+# Pipeline state
+stage: complete
+completed_stages:
+  - query
+  - download
+  - processing
+  - visualization
+pipeline_stages:
+  - query
+  - download
+  - processing
+  - visualization
+
+# Query results
+query_results:
+  observations: [...]
+  time_span_days: 33.1
+  total_size_gb: 0.51
+
+# Downloaded files and photometry
+downloaded_files: [...]
+photometry_results: [...]
 ```
 
 This enables:

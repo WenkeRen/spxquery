@@ -13,6 +13,7 @@ SPXQuery is a Python package designed to automate SPHEREx spectral image data qu
 ## Features
 
 - **Automated data pipeline**: Query → Download → Photometry → Visualization
+- **Flexible photometry**: FWHM-based adaptive apertures and dual background methods (annulus/window)
 - **Image cutout support**: Download only regions of interest (99% storage reduction)
 - **Parallel processing**: Fast downloads and photometry extraction
 - **Resumable execution**: Automatic state persistence for interrupted runs
@@ -129,8 +130,8 @@ output_dir/
 ├── results/
 │   ├── lightcurve.csv       # Photometry time-series (all measurements)
 │   ├── combined_plot.png    # Spectral + temporal visualization
-│   ├── query_summary.json   # Query metadata
-└── {source_name}.json       # Pipeline state (for resume)
+│   ├── query_summary.yaml   # Query metadata
+└── {source_name}.yaml       # Pipeline state (for resume)
 ```
 
 The `lightcurve.csv` contains all photometry measurements with columns including MJD, flux, wavelength, band, quality flags, and SNR.
@@ -162,7 +163,7 @@ The `lightcurve.csv` contains all photometry measurements with columns including
 
 ## Known Issues
 
-**Overly Conservative Source Masking**: The pipeline uses official SPHEREx image masks to avoid bad pixels during background subtraction. However, the official pipeline tends to provide overly large source masks. If your target is located in an extended nebula or near bright stars, the photometry extraction may fail because no clean pixels are available for background estimation. In such cases, consider using a different background estimation method or manually adjusting the mask parameters.
+**Overly Conservative Source Masking**: The pipeline uses official SPHEREx image masks to avoid bad pixels during background subtraction. However, the official pipeline tends to provide overly large source masks. If your target is located in an extended nebula or near bright stars, the photometry extraction may fail because no clean pixels are available for background estimation. **Solution**: Use the window background method (`background_method='window'` in advanced configuration) which estimates background from a rectangular region instead of an annulus, or manually adjust mask parameters.
 
 ## License
 

@@ -11,6 +11,45 @@ Quality control operates on two criteria:
 
 **Important:** Quality filtering applies **only to visualization**. All measurements are saved to the CSV file, allowing users to apply custom filtering for their analysis.
 
+## Variance Repair
+
+### Automatic Handling of Flagged Pixels
+
+SPXQuery automatically repairs variance estimates for pixels with valid flux but NaN (not-a-number) variance values. This occurs when pixel flags indicate quality issues but the flux measurement itself is valid.
+
+### How Variance Repair Works
+
+During photometry extraction, if the variance at the source position is NaN:
+
+1. **Validation**: Check that the NaN variance correlates with pixel flags (e.g., non-functional pixels)
+2. **Repair**: Replace NaN variance with the median variance from valid (unflagged) pixels in the image
+3. **Logging**: Record that variance repair was applied for this observation
+
+**Example log message:**
+```
+WARNING: Variance at source position is NaN for file_D3_20250325_062.fits
+INFO: Median variance from valid pixels: 2.34e-05
+INFO: Using median variance as fallback for flux uncertainty calculation
+```
+
+### Why Variance Repair Matters
+
+Without variance repair, observations with NaN variance would be discarded even when the flux measurement is valid. This preserves valuable data while providing a conservative uncertainty estimate.
+
+**Impact:**
+- **More complete light curves**: Preserves observations that would otherwise be lost
+- **Conservative uncertainties**: Median variance provides a reasonable fallback estimate
+- **Quality tracking**: Flagged pixels are still tracked, allowing users to filter if desired
+
+### When Variance Repair is Applied
+
+Variance repair is only applied when:
+- The source pixel has valid (non-NaN) flux
+- The variance at the source position is NaN
+- Valid pixels exist elsewhere in the image to compute median variance
+
+If all pixels have NaN variance, the observation is skipped with an error message.
+
 ## Signal-to-Noise Ratio (SNR)
 
 ### Definition
@@ -27,16 +66,25 @@ Where:
 
 ### SNR Threshold
 
-The `sigma_threshold` parameter sets the minimum SNR for "good" measurements:
+The `sigma_threshold` parameter (in `VisualizationConfig`) sets the minimum SNR for "good" measurements in plots:
 
 ```python
-from spxquery.core.pipeline import run_pipeline
+from spxquery.utils.params import export_default_parameters
 
+# Export and customize visualization config
+params_file = export_default_parameters("config", "my_params.yaml")
+
+# Edit the YAML file:
+# visualization:
+#   sigma_threshold: 5.0  # Adjust as needed
+
+# Load in pipeline
+from spxquery.core.pipeline import run_pipeline
 run_pipeline(
     ra=304.69,
     dec=42.44,
     output_dir="output",
-    sigma_threshold=5.0  # Default: 5 sigma detection threshold
+    advanced_params_file="config/my_params.yaml"
 )
 ```
 
@@ -61,7 +109,7 @@ The SPHEREx FLAGS extension uses a bitmap where each bit represents a different 
 
 ### Default Bad Flags
 
-SPXQuery uses this default set of bad pixel flags:
+SPXQuery uses this default set of bad pixel flags (configured in `PhotometryConfig`):
 
 ```python
 bad_flags = [0, 1, 2, 6, 7, 9, 10, 11, 15]
@@ -87,8 +135,6 @@ SPHEREx provides additional flags that are **not** rejected by default:
 
 | Bit | Flag Name | Description | Why Not Default |
 |-----|-----------|-------------|-----------------|
-| 4 | PHANTOM | Phantom source detected | May not affect photometry |
-| 5 | REFERENCE | Reference pixel | Informational |
 | 12 | FULLSAMPLE | Full sample available | Quality indicator, not rejection criterion |
 | 14 | PHANMISS | Phantom or missing | Overlap with bits 0, 9 |
 | 17 | PERSIST | Detector persistence | Low impact for most sources |
@@ -97,33 +143,29 @@ SPHEREx provides additional flags that are **not** rejected by default:
 
 ### Customizing Bad Flags
 
-**Relaxed filtering** (accept more data):
-```python
-run_pipeline(
-    ra=304.69,
-    dec=42.44,
-    output_dir="output",
-    bad_flags=[0, 1, 2]  # Only reject saturated/bad pixels
-)
+Use YAML configuration to customize bad flags:
+
+```yaml
+# my_params.yaml
+photometry:
+  bad_flags: [0, 1, 2]  # Relaxed: only reject saturated/bad pixels
+
+# Or strict filtering
+photometry:
+  bad_flags: [0, 1, 2, 4, 6, 7, 9, 10, 11, 14, 15, 17]  # Add PHANTOM, PHANMISS, PERSIST
+
+# Or no flag filtering
+photometry:
+  bad_flags: []  # Accept all flags
 ```
 
-**Strict filtering** (reject more):
+Then load in pipeline:
 ```python
 run_pipeline(
     ra=304.69,
     dec=42.44,
     output_dir="output",
-    bad_flags=[0, 1, 2, 4, 6, 7, 9, 10, 11, 14, 15, 17]  # Add PHANTOM, PHANMISS, PERSIST
-)
-```
-
-**No flag filtering** (use all data):
-```python
-run_pipeline(
-    ra=304.69,
-    dec=42.44,
-    output_dir="output",
-    bad_flags=[]  # Accept all flags
+    advanced_params_file="my_params.yaml"
 )
 ```
 

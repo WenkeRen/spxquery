@@ -1,6 +1,6 @@
 # Processing Modules
 
-Scientific data extraction, aperture photometry, and time-series analysis.
+Scientific data extraction, aperture photometry, background estimation, and time-series analysis.
 
 ```{eval-rst}
 .. automodule:: spxquery.processing.fits_handler
@@ -9,6 +9,11 @@ Scientific data extraction, aperture photometry, and time-series analysis.
    :show-inheritance:
 
 .. automodule:: spxquery.processing.photometry
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: spxquery.processing.background
    :members:
    :undoc-members:
    :show-inheritance:
