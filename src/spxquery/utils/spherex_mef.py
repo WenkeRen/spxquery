@@ -608,11 +608,10 @@ class SPHERExMEF:
                 logger.warning(f"Unknown extension '{ext_name}' requested for cutout, skipping")
 
         # Log cutout info
-        bbox = cutout_obj.bbox_original
         logger.info(
             f"Extracted cutout: position={position}, size={size}, "
             f"shape={cutout_obj.shape}, "
-            f"bbox=[{bbox.ixmin}:{bbox.ixmax}, {bbox.iymin}:{bbox.iymax}]"
+            f"bbox=[{cutout_obj.xmin_original}:{cutout_obj.xmax_original}, {cutout_obj.ymin_original}:{cutout_obj.ymax_original}]"
         )
 
         return cutout_dict
