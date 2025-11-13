@@ -1042,6 +1042,7 @@ def subtract_zodiacal_background(
     variance: Optional[np.ndarray] = None,
     zodi_scale_min: float = 0.0,
     zodi_scale_max: float = 10.0,
+    bg_fraction_reject_level: float = 0.5,
 ) -> Tuple[np.ndarray, float]:
     """
     Subtract zodiacal light background from image with amplitude scaling.
@@ -1063,6 +1064,10 @@ def subtract_zodiacal_background(
         Minimum allowed zodiacal scaling factor
     zodi_scale_max : float
         Maximum allowed zodiacal scaling factor
+    bg_fraction_reject_level : float, optional
+        Minimum fraction of background pixels required for zodiacal estimation.
+        If the fraction of available background pixels is below this threshold,
+        the function will use a fallback scale factor of 1.0. Default is 0.5.
 
     Returns
     -------
@@ -1079,10 +1084,10 @@ def subtract_zodiacal_background(
     n_total_pixels = bg_mask.size
     bg_fraction = n_bg_pixels / n_total_pixels if n_total_pixels > 0 else 0.0
 
-    if bg_fraction < 0.5:
+    if bg_fraction < bg_fraction_reject_level:
         logger.warning(
             f"Insufficient background pixels for zodiacal estimation "
-            f"({n_bg_pixels}/{n_total_pixels} = {bg_fraction * 100:.1f}% < 50%) - using fallback scale factor 1.0"
+            f"({n_bg_pixels}/{n_total_pixels} = {bg_fraction * 100:.1f}% < {bg_fraction_reject_level * 100:.1f}%) - using fallback scale factor 1.0"
         )
         scale_factor = 1.0
     else:
