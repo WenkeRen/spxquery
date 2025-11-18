@@ -30,18 +30,29 @@ class SEDConfig:
     Configuration for SED reconstruction from narrow-band photometry.
 
     This class controls all aspects of spectral reconstruction using
-    regularized least-squares optimization with wavelet-based multi-scale
-    regularization and CVXPY.
+    regularized least-squares optimization with Stationary Wavelet Transform (SWT)
+    multi-scale regularization and CVXPY.
+
+    The SWT implementation uses a 4-group hyperparameter system:
+    - Group A: Approximation coefficients (low-frequency continuum)
+    - Group B: Coarse detail coefficients (large-scale features)
+    - Group C: Medium detail coefficients (emission lines, main features)
+    - Group D: Fine detail coefficients (high-frequency noise)
 
     Parameters
     ----------
-    lambda_low : float
+    lambda_continuum : float
         Regularization weight for approximation coefficients (low-frequency continuum).
         Lower values preserve more continuum structure. Default: 0.1.
-    lambda_detail : float
-        Regularization weight for detail coefficients (high-frequency features + noise).
-        Higher values suppress more noise but may reduce emission line strength.
-        Default: 10.0.
+    lambda_low_features : float
+        Regularization weight for coarse detail coefficients (large-scale features).
+        Controls broad emission/absorption features. Default: 1.0.
+    lambda_main_features : float
+        Regularization weight for medium detail coefficients (emission lines).
+        Controls main spectral features and line strengths. Default: 5.0.
+    lambda_noise : float
+        Regularization weight for fine detail coefficients (high-frequency noise).
+        Higher values suppress more noise. Default: 100.0.
     wavelet_family : str
         Wavelet basis function family. Default: 'sym6' (Symlet-6).
         Common choices: 'sym4', 'sym6', 'sym8', 'db4', 'db6', 'db8'.
@@ -54,22 +65,26 @@ class SEDConfig:
         Symmetric mode reflects signal at boundaries to avoid edge artifacts.
     resolution_samples : int
         Number of wavelength bins in reconstructed spectrum.
+        Must be even for SWT (symmetric padding requirements).
         Default: 1020 (approximately 2-pixel sampling of detector).
     auto_tune : bool
-        Enable automatic hyperparameter tuning via grid search.
-        If False, uses lambda_low/lambda_detail as specified. Default: False.
-    lambda_low_grid : List[float]
-        Grid search values for lambda_low when auto_tune=True.
-        Default: [0.01, 0.1, 1.0, 10.0].
-    lambda_detail_grid : List[float]
-        Grid search values for lambda_detail when auto_tune=True.
-        Default: [1.0, 10.0, 100.0, 1000.0].
+        Enable automatic hyperparameter tuning via grouped grid search.
+        If False, uses grouped lambda values as specified. Default: False.
+    lambda_continuum_grid : List[float]
+        Grid search values for continuum regularization when auto_tune=True.
+        Default: [0.01, 0.1, 1.0].
+    lambda_low_features_grid : List[float]
+        Grid search values for low-feature regularization when auto_tune=True.
+        Default: [0.1, 1.0, 10.0].
+    lambda_main_features_grid : List[float]
+        Grid search values for main-feature regularization when auto_tune=True.
+        Default: [1.0, 10.0, 100.0].
+    lambda_noise_grid : List[float]
+        Grid search values for noise regularization when auto_tune=True.
+        Default: [10.0, 100.0, 1000.0].
     validation_fraction : float
         Fraction of data reserved for validation during tuning.
         Must be between 0 and 1. Default: 0.2 (80/20 train/test split).
-    stitch_bands : bool
-        Automatically stitch 6 bands into continuous spectrum with
-        normalization factors. Default: True.
     sigma_threshold : float
         Minimum SNR (flux/flux_error) for quality filtering.
         Measurements below this threshold are excluded. Default: 5.0.
@@ -110,12 +125,18 @@ class SEDConfig:
 
     Examples
     --------
-    >>> config = SEDConfig(lambda_low=0.1, lambda_detail=10.0, auto_tune=False)
+    >>> config = SEDConfig(lambda_continuum=0.1, lambda_noise=100.0, auto_tune=False)
     >>> config.to_yaml_file("my_config.yaml")
     >>> loaded = SEDConfig.from_yaml_file("my_config.yaml")
     """
 
-    # Wavelet regularization hyperparameters
+    # SWT 4-group hyperparameters
+    lambda_continuum: float = 0.1
+    lambda_low_features: float = 1.0
+    lambda_main_features: float = 5.0
+    lambda_noise: float = 100.0
+
+    # Backward compatibility (deprecated)
     lambda_low: float = 0.1
     lambda_detail: float = 10.0
 
@@ -129,12 +150,15 @@ class SEDConfig:
 
     # Auto-tuning parameters
     auto_tune: bool = False
-    lambda_low_grid: List[float] = field(default_factory=lambda: [0.01, 0.1, 1.0, 10.0])
-    lambda_detail_grid: List[float] = field(default_factory=lambda: [1.0, 10.0, 100.0, 1000.0])
+    lambda_continuum_grid: List[float] = field(default_factory=lambda: [0.01, 0.1, 1.0])
+    lambda_low_features_grid: List[float] = field(default_factory=lambda: [0.1, 1.0, 10.0])
+    lambda_main_features_grid: List[float] = field(default_factory=lambda: [1.0, 10.0, 100.0])
+    lambda_noise_grid: List[float] = field(default_factory=lambda: [10.0, 100.0, 1000.0])
     validation_fraction: float = 0.2
 
-    # Multi-band stitching
-    stitch_bands: bool = True
+    # Backward compatibility (deprecated grid parameters)
+    lambda_low_grid: List[float] = field(default_factory=lambda: [0.01, 0.1, 1.0, 10.0])
+    lambda_detail_grid: List[float] = field(default_factory=lambda: [1.0, 10.0, 100.0, 1000.0])
 
     # Quality control
     sigma_threshold: float = 3.0
@@ -154,9 +178,25 @@ class SEDConfig:
     solver_verbose: bool = False
     epsilon_weight: float = 1e-10
 
+    # Spatial weighting for L1 regularization (to reduce Gibbs Phenomenon at edges)
+    spatial_weight_enabled: bool = True
+    padding_region_weight: float = 0.0  # Completely suppress regularization in padding
+    science_region_weight: float = 1.0  # Full regularization in scientific regions
+    transition_width: int = 0  # Width of transition zone (pixels), 0 = hard cutoffs
+
     def __post_init__(self):
         """Validate configuration parameters after initialization."""
-        # Validate regularization weights
+        # Validate SWT 4-group regularization weights
+        if self.lambda_continuum < 0:
+            raise ValueError(f"lambda_continuum must be non-negative, got {self.lambda_continuum}")
+        if self.lambda_low_features < 0:
+            raise ValueError(f"lambda_low_features must be non-negative, got {self.lambda_low_features}")
+        if self.lambda_main_features < 0:
+            raise ValueError(f"lambda_main_features must be non-negative, got {self.lambda_main_features}")
+        if self.lambda_noise < 0:
+            raise ValueError(f"lambda_noise must be non-negative, got {self.lambda_noise}")
+
+        # Validate backward compatibility parameters
         if self.lambda_low < 0:
             raise ValueError(f"lambda_low must be non-negative, got {self.lambda_low}")
         if self.lambda_detail < 0:
@@ -165,12 +205,17 @@ class SEDConfig:
         # Validate wavelet configuration
         import pywt
 
-        valid_wavelets = pywt.wavelist(kind="discrete")
+        try:
+            valid_wavelets = pywt.wavelist(kind="discrete")
+        except AttributeError:
+            # Fallback for older PyWavelets versions
+            valid_wavelets = ["sym4", "sym6", "sym8", "db4", "db6", "db8", "coif1", "coif2", "bior1.3", "rbio1.3"]
+
         if self.wavelet_family not in valid_wavelets:
             raise ValueError(
                 f"wavelet_family '{self.wavelet_family}' not recognized. "
-                f"Valid choices: {', '.join(valid_wavelets[:20])}... "
-                f"(run pywt.wavelist() for full list)"
+                f"Valid choices include: {', '.join(valid_wavelets[:15])}... "
+                f"(check pywt.wavelist() for full list)"
             )
 
         if self.wavelet_level is not None:
@@ -180,6 +225,11 @@ class SEDConfig:
         # Validate resolution
         if self.resolution_samples <= 0:
             raise ValueError(f"resolution_samples must be positive, got {self.resolution_samples}")
+        if self.resolution_samples % 2 != 0:
+            raise ValueError(
+                f"resolution_samples must be even for SWT (got {self.resolution_samples}). "
+                f"SWT requires symmetric padding, which works best with even signal lengths."
+            )
         if self.resolution_samples > 10000:
             raise ValueError(
                 f"resolution_samples too large ({self.resolution_samples}), may cause memory issues. Consider < 10000."
@@ -191,6 +241,25 @@ class SEDConfig:
 
         # Validate grid search ranges
         if self.auto_tune:
+            # Validate new grouped parameters
+            if not self.lambda_continuum_grid:
+                raise ValueError("lambda_continuum_grid cannot be empty when auto_tune=True")
+            if not self.lambda_low_features_grid:
+                raise ValueError("lambda_low_features_grid cannot be empty when auto_tune=True")
+            if not self.lambda_main_features_grid:
+                raise ValueError("lambda_main_features_grid cannot be empty when auto_tune=True")
+            if not self.lambda_noise_grid:
+                raise ValueError("lambda_noise_grid cannot be empty when auto_tune=True")
+            if any(x < 0 for x in self.lambda_continuum_grid):
+                raise ValueError("All lambda_continuum_grid values must be non-negative")
+            if any(x < 0 for x in self.lambda_low_features_grid):
+                raise ValueError("All lambda_low_features_grid values must be non-negative")
+            if any(x < 0 for x in self.lambda_main_features_grid):
+                raise ValueError("All lambda_main_features_grid values must be non-negative")
+            if any(x < 0 for x in self.lambda_noise_grid):
+                raise ValueError("All lambda_noise_grid values must be non-negative")
+
+            # Validate backward compatibility parameters
             if not self.lambda_low_grid:
                 raise ValueError("lambda_low_grid cannot be empty when auto_tune=True")
             if not self.lambda_detail_grid:
@@ -244,6 +313,14 @@ class SEDConfig:
         # Validate epsilon
         if self.epsilon_weight <= 0:
             raise ValueError(f"epsilon_weight must be positive, got {self.epsilon_weight}")
+
+        # Validate spatial weighting parameters
+        if not (0.0 <= self.padding_region_weight <= 1.0):
+            raise ValueError(f"padding_region_weight must be between 0.0 and 1.0, got {self.padding_region_weight}")
+        if not (0.0 <= self.science_region_weight <= 1.0):
+            raise ValueError(f"science_region_weight must be between 0.0 and 1.0, got {self.science_region_weight}")
+        if self.transition_width < 0:
+            raise ValueError(f"transition_width must be non-negative, got {self.transition_width}")
 
     def to_dict(self) -> Dict[str, Any]:
         """

@@ -18,7 +18,6 @@ SEDConfig : Configuration dataclass with all reconstruction parameters
 SEDReconstructor : Main orchestrator for the reconstruction pipeline
 SEDReconstructionResult : Container for reconstruction outputs
 BandReconstructionResult : Single-band reconstruction result
-StitchedSpectrum : Multi-band stitched spectrum with normalization
 
 Main Functions
 --------------
@@ -37,7 +36,7 @@ Basic usage with default settings:
 
 With auto-tuning enabled:
 
->>> config = SEDConfig(auto_tune=True, stitch_bands=True)
+>>> config = SEDConfig(auto_tune=True)
 >>> reconstructor = SEDReconstructor(config)
 >>> result = reconstructor.reconstruct_from_csv("lightcurve.csv")
 
@@ -64,7 +63,6 @@ from .reconstruction import (
 
 # Data structures
 from .data_loader import BandData
-from .stitching import StitchedSpectrum
 from .validation import ValidationMetrics
 from .solver import ReconstructionResult
 from .tuning import TuningResult
@@ -84,7 +82,6 @@ __all__ = [
     "reconstruct_sed_from_csv",
     # Data structures
     "BandData",
-    "StitchedSpectrum",
     "ValidationMetrics",
     "ReconstructionResult",
     "TuningResult",

@@ -86,7 +86,7 @@ def plot_reconstructed_spectrum(
     ax.set_ylabel(r"$F_\lambda$ ($\mu$Jy)", fontsize=12)
     ax.set_title(
         f"Band {result.band} Reconstruction\n"
-        f"$\\lambda_1$={result.lambda1:.2e}, $\\lambda_2$={result.lambda2:.2e}, "
+        f"continuum={result.lambda_vector[0]:.2e}, noise={result.lambda_vector[-1]:.2e}, "
         f"$\\chi^2_\\nu$={result.validation_metrics.chi_squared_reduced:.2f}",
         fontsize=11,
     )
@@ -157,78 +157,6 @@ def plot_residuals(
     return ax_raw, ax_weighted
 
 
-def plot_stitched_spectrum(
-    result: SEDReconstructionResult,
-    ax: Optional[plt.Axes] = None,
-    colormap: str = "rainbow",
-) -> plt.Axes:
-    """
-    Plot stitched multi-band spectrum.
-
-    Parameters
-    ----------
-    result : SEDReconstructionResult
-        Full reconstruction result with stitched spectrum.
-    ax : plt.Axes, optional
-        Axes to plot on. If None, creates new figure.
-    colormap : str
-        Matplotlib colormap name for coloring bands.
-
-    Returns
-    -------
-    plt.Axes
-        Axes object with plot.
-    """
-    if result.stitched_spectrum is None:
-        raise ValueError("No stitched spectrum available in result")
-
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(14, 6))
-
-    stitched = result.stitched_spectrum
-
-    # Color code by band
-    cmap = plt.get_cmap(colormap)
-    band_colors = {
-        "D1": cmap(0.0),
-        "D2": cmap(0.2),
-        "D3": cmap(0.4),
-        "D4": cmap(0.6),
-        "D5": cmap(0.8),
-        "D6": cmap(1.0),
-    }
-
-    # Plot each band segment
-    for band in ["D1", "D2", "D3", "D4", "D5", "D6"]:
-        if band not in result.band_results:
-            continue
-
-        mask = stitched.band_labels == band
-        if not np.any(mask):
-            continue
-
-        ax.plot(
-            stitched.wavelength[mask],
-            stitched.flux[mask],
-            '-',
-            color=band_colors.get(band, 'black'),
-            linewidth=1.5,
-            label=f"{band} ($\\eta$={stitched.normalization_factors[band]:.3f})",
-        )
-
-    # Labels
-    ax.set_xlabel(r"Wavelength ($\mu$m)", fontsize=12)
-    ax.set_ylabel(r"$F_\lambda$ ($\mu$Jy)", fontsize=12)
-    ax.set_title(
-        f"Stitched SED: {result.source_name}\n"
-        f"{len(result.band_results)} bands, "
-        f"{len(stitched.wavelength)} wavelength points",
-        fontsize=11,
-    )
-    ax.legend(loc='best', fontsize=9, ncol=2)
-    ax.grid(alpha=0.3)
-
-    return ax
 
 
 def plot_band_comparison(
@@ -298,8 +226,8 @@ def plot_diagnostic_summary(
     Create comprehensive diagnostic figure with multiple panels.
 
     Layout:
-    - Top row: Stitched spectrum (full width)
-    - Middle row: Individual band spectra (2x3 grid)
+    - Top row: Individual band spectra (3 bands)
+    - Middle row: Individual band spectra (remaining bands)
     - Bottom row: Residuals for first band (example)
 
     Parameters
@@ -317,14 +245,19 @@ def plot_diagnostic_summary(
     fig = plt.figure(figsize=figsize)
     gs = GridSpec(3, 3, figure=fig, hspace=0.35, wspace=0.3)
 
-    # Top row: Stitched spectrum (if available)
-    if result.stitched_spectrum is not None:
-        ax_stitched = fig.add_subplot(gs[0, :])
-        plot_stitched_spectrum(result, ax=ax_stitched)
-
-    # Middle row: Band comparison (first 3 bands)
+    # Top row: Band comparison (first 3 bands)
     band_list = sorted(result.band_results.keys())
     for idx, band in enumerate(band_list[:3]):
+        ax = fig.add_subplot(gs[0, idx])
+        band_result = result.band_results[band]
+        ax.plot(band_result.wavelength, band_result.flux, 'k-', linewidth=1)
+        ax.set_title(f"{band}", fontsize=10)
+        ax.set_xlabel(r"Wavelength ($\mu$m)", fontsize=9)
+        ax.set_ylabel(r"$F_\lambda$ ($\mu$Jy)", fontsize=9)
+        ax.grid(alpha=0.3)
+
+    # Middle row: Remaining bands
+    for idx, band in enumerate(band_list[3:6]):
         ax = fig.add_subplot(gs[1, idx])
         band_result = result.band_results[band]
         ax.plot(band_result.wavelength, band_result.flux, 'k-', linewidth=1)
@@ -414,16 +347,6 @@ def save_all_plots(
     plt.close(fig_comparison)
     saved_files.append(path_comparison)
     logger.info(f"Saved band comparison to {path_comparison}")
-
-    # Stitched spectrum (if available)
-    if result.stitched_spectrum is not None:
-        fig_stitched, ax_stitched = plt.subplots(figsize=(14, 6))
-        plot_stitched_spectrum(result, ax=ax_stitched)
-        path_stitched = output_dir / f"{prefix}_stitched_spectrum.png"
-        fig_stitched.savefig(path_stitched, dpi=150, bbox_inches='tight')
-        plt.close(fig_stitched)
-        saved_files.append(path_stitched)
-        logger.info(f"Saved stitched spectrum to {path_stitched}")
 
     logger.info(f"Saved {len(saved_files)} plot files to {output_dir}")
 
