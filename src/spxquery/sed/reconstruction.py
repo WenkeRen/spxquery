@@ -14,10 +14,11 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from .config import SEDConfig
+from .config import SEDConfig, DETECTOR_WAVELENGTH_RANGES
 from .data_loader import load_all_bands, BandData
-from .matrices import build_all_matrices
+from .matrices import build_all_matrices, build_pixel_observation_dataset, build_measurement_matrix, build_weight_vector
 from .solver import reconstruct_single_band
+from .solver_torch import solve_global_reconstruction
 from .validation import assess_reconstruction_quality, ValidationMetrics
 from .tuning import tune_and_reconstruct, TuningResult
 
@@ -27,36 +28,34 @@ logger = logging.getLogger(__name__)
 @dataclass
 class BandReconstructionResult:
     """
-    Complete reconstruction result for a single detector band using SWT regularization.
-
+    Complete reconstruction result for a single detector band.
+    
     Attributes
     ----------
     band : str
         Band identifier (e.g., 'D1').
     wavelength : np.ndarray
-        Wavelength grid in microns, shape (N,).
+        Wavelength grid in microns.
     flux : np.ndarray
-        Reconstructed flux density in microJansky, shape (N,).
+        Reconstructed flux density in microJansky.
     lambda_vector : np.ndarray
-        SWT regularization weight vector used, shape (J+1,).
-        lambda_vector[0]: approximation coefficients (continuum)
-        lambda_vector[1:]: detail coefficients for each scale
+        Regularization weights used.
     wavelet_info : dict
-        SWT decomposition information (level, coefficient counts).
+        Wavelet decomposition info (if applicable).
     auto_tuned : bool
-        Whether hyperparameters were automatically tuned.
+        Whether hyperparameters were tuned.
     solver_status : str
-        CVXPY solver status.
+        Solver status.
     solver_time : float
-        Solver wall-clock time in seconds.
+        Solver time in seconds.
     validation_metrics : ValidationMetrics
         Quality assessment metrics.
     tuning_result : Optional[TuningResult]
-        Grid search results if auto_tuned=True, else None.
+        Tuning details.
     per_scale_penalties : np.ndarray
-        Per-scale regularization term values, shape (J+1,).
+        Regularization penalties.
     total_penalty : float
-        Total SWT regularization penalty value.
+        Total penalty.
     """
 
     band: str
@@ -74,9 +73,9 @@ class BandReconstructionResult:
 
     def __post_init__(self):
         """Set default values for optional fields."""
-        if self.per_scale_penalties is None:
-            # Initialize with zeros if not provided
+        if self.per_scale_penalties is None and self.lambda_vector is not None:
             self.per_scale_penalties = np.zeros(len(self.lambda_vector))
+        if self.total_penalty is None:
             self.total_penalty = 0.0
 
 
@@ -132,19 +131,26 @@ class SEDReconstructionResult:
 
         # Concatenate individual band spectra
         data_list = []
-        for band, result in self.band_results.items():
+        # Sort bands for consistent output
+        sorted_bands = sorted(self.band_results.keys())
+        
+        for band in sorted_bands:
+            result = self.band_results[band]
             band_df = pd.DataFrame({
                 "wavelength": result.wavelength,
                 "flux": result.flux,
                 "band": band,
             })
             data_list.append(band_df)
-        df = pd.concat(data_list, ignore_index=True)
-        df = df.sort_values("wavelength").reset_index(drop=True)
-
-        # Save to CSV
-        df.to_csv(filepath, index=False)
-        logger.info(f"Saved reconstructed spectrum to {filepath}")
+            
+        if data_list:
+            df = pd.concat(data_list, ignore_index=True)
+            df = df.sort_values("wavelength").reset_index(drop=True)
+            # Save to CSV
+            df.to_csv(filepath, index=False)
+            logger.info(f"Saved reconstructed spectrum to {filepath}")
+        else:
+            logger.warning("No band results to save to CSV")
 
         return filepath
 
@@ -182,6 +188,7 @@ class SEDReconstructionResult:
             "source_dec": self.source_dec,
             "reconstruction_date": self.reconstruction_date,
             "auto_tuned": self.config.auto_tune,
+            "solver_type": self.config.solver_type,
             "bands_reconstructed": list(self.band_results.keys()),
             "wavelet_family": self.config.wavelet_family,
         }
@@ -189,20 +196,14 @@ class SEDReconstructionResult:
         # Add per-band hyperparameters and quality metrics
         for band, result in self.band_results.items():
             # Old-style DWT parameters (backward compatibility)
-            metadata[f"{band}_lambda_low"] = (
-                result.lambda_vector[0] if hasattr(result, 'lambda_vector') else 0.1
-            )
-            metadata[f"{band}_lambda_detail"] = (
-                np.mean(result.lambda_vector[1:]) if hasattr(result, 'lambda_vector') else 10.0
-            )
-
-            # New SWT parameters
-            metadata[f"{band}_lambda_vector"] = (
-                result.lambda_vector.tolist() if hasattr(result, 'lambda_vector') else []
-            )
-            metadata[f"{band}_num_swt_operators"] = len(
-                result.lambda_vector
-            ) if hasattr(result, 'lambda_vector') else 2
+            if hasattr(result, 'lambda_vector') and result.lambda_vector is not None and len(result.lambda_vector) > 0:
+                metadata[f"{band}_lambda_low"] = float(result.lambda_vector[0])
+                metadata[f"{band}_lambda_detail"] = float(np.mean(result.lambda_vector[1:]))
+                metadata[f"{band}_lambda_vector"] = result.lambda_vector.tolist()
+                metadata[f"{band}_num_swt_operators"] = len(result.lambda_vector)
+            else:
+                # Defaults if vector missing (e.g. torch solver might not use lambda_vector same way)
+                metadata[f"{band}_lambda_vector"] = []
 
             # SWT penalty information
             if hasattr(result, 'total_penalty') and result.total_penalty is not None:
@@ -210,9 +211,13 @@ class SEDReconstructionResult:
             if hasattr(result, 'per_scale_penalties') and result.per_scale_penalties is not None:
                 metadata[f"{band}_per_scale_penalties"] = result.per_scale_penalties.tolist()
 
-            metadata[f"{band}_wavelet_level"] = result.wavelet_info.get("level", None)
-            metadata[f"{band}_chi_squared_reduced"] = result.validation_metrics.chi_squared_reduced
-            metadata[f"{band}_solver_time"] = result.solver_time
+            if result.wavelet_info:
+                metadata[f"{band}_wavelet_level"] = result.wavelet_info.get("level", None)
+                
+            if result.validation_metrics:
+                metadata[f"{band}_chi_squared_reduced"] = float(result.validation_metrics.chi_squared_reduced)
+                
+            metadata[f"{band}_solver_time"] = float(result.solver_time)
 
         # Write YAML
         with open(filepath, 'w') as f:
@@ -279,8 +284,13 @@ class SEDReconstructor:
         """
         self.config = config
         logger.info("Initialized SEDReconstructor")
-        logger.info(f"  Auto-tuning: {config.auto_tune}")
-        logger.info(f"  Resolution: {config.resolution_samples} samples")
+        logger.info(f"  Solver: {config.solver_type}")
+        if config.solver_type == "cvxpy":
+            logger.info(f"  Auto-tuning: {config.auto_tune}")
+            logger.info(f"  Resolution: {config.resolution_samples} samples")
+        else:
+            logger.info(f"  Global Resolution: {config.global_resolution} samples")
+            logger.info(f"  Device: {config.device}")
 
     def reconstruct_from_csv(
         self, csv_path: Path, metadata: Optional[Dict] = None
@@ -312,15 +322,99 @@ class SEDReconstructor:
         if metadata is not None:
             file_metadata.update(metadata)
 
-        # Reconstruct each band
         band_results = {}
-        for band, band_data in band_data_dict.items():
-            logger.info(f"\n{'='*60}")
-            logger.info(f"Reconstructing {band}")
-            logger.info(f"{'='*60}")
 
-            band_result = self._reconstruct_single_band(band_data)
-            band_results[band] = band_result
+        # Branch based on solver type
+        if self.config.solver_type == "torch":
+            logger.info("Using PyTorch solver for global reconstruction")
+            
+            # 1. Build global pixel observation dataset
+            start_time = datetime.now()
+            dataset = build_pixel_observation_dataset(band_data_dict, self.config)
+            
+            # 2. Solve global reconstruction
+            global_spectrum_tensor = solve_global_reconstruction(dataset, self.config)
+            global_spectrum = global_spectrum_tensor.numpy()
+            
+            solver_time = (datetime.now() - start_time).total_seconds()
+            
+            # 3. Calculate GLOBAL validation metrics (since fitting was global)
+            # Reconstruct global H and y/weights to compute a single global chi-squared
+            # This avoids re-computing per-band chi-squared which is less meaningful for global fit
+            
+            global_wavelength_grid = dataset.global_wavelength_grid.numpy() # Should match config.global_resolution
+            
+            # Collect all per-band matrices to form global system for validation
+            all_H_bands = []
+            all_fluxes = []
+            all_weights = []
+            
+            # Sort bands to ensure deterministic order (though build_pixel_observation_dataset does its own thing,
+            # we need to be consistent here for validation)
+            sorted_band_keys = sorted(band_data_dict.keys())
+            
+            for band in sorted_band_keys:
+                band_data = band_data_dict[band]
+                H_band = build_measurement_matrix(band_data, global_wavelength_grid, self.config)
+                weights_band = build_weight_vector(band_data, self.config)
+                
+                all_H_bands.append(H_band)
+                all_fluxes.append(band_data.flux)
+                all_weights.append(weights_band)
+                
+            # Stack into global system
+            if all_H_bands:
+                import scipy.sparse as sp
+                H_global = sp.vstack(all_H_bands)
+                y_global = np.concatenate(all_fluxes)
+                w_global = np.concatenate(all_weights)
+                
+                # Assess global quality
+                global_metrics = assess_reconstruction_quality(
+                    y_global, H_global, global_spectrum, w_global
+                )
+                logger.info(f"Global reconstruction quality: chi2_red={global_metrics.chi_squared_reduced:.3f}")
+            else:
+                # Should not happen if band_data_dict is not empty
+                global_metrics = None
+
+            # 4. Package results per band
+            for band, band_data in band_data_dict.items():
+                # Get detector range
+                lambda_min, lambda_max = self.config.wavelength_range
+                l_min, l_max = DETECTOR_WAVELENGTH_RANGES.get(band, (lambda_min, lambda_max))
+                
+                # Find indices in global grid corresponding to this band
+                idx_start = np.searchsorted(global_wavelength_grid, l_min)
+                idx_end = np.searchsorted(global_wavelength_grid, l_max)
+                
+                # Slice global spectrum
+                wavelength_band = global_wavelength_grid[idx_start:idx_end]
+                flux_band = global_spectrum[idx_start:idx_end]
+                
+                # Use the GLOBAL metrics for every band result, as they share the same model
+                band_result = BandReconstructionResult(
+                    band=band,
+                    wavelength=wavelength_band,
+                    flux=flux_band,
+                    lambda_vector=np.array([self.config.regularization_weight]), # Placeholder
+                    wavelet_info={},
+                    auto_tuned=False,
+                    solver_status="optimal" if global_metrics and np.isfinite(global_metrics.chi_squared) else "error",
+                    solver_time=solver_time,
+                    validation_metrics=global_metrics # Shared global metrics
+                )
+                band_results[band] = band_result
+                
+        else:
+            # Existing CVXPY per-band workflow
+            for band, band_data in band_data_dict.items():
+                logger.info(f"\n{'='*60}")
+                logger.info(f"Reconstructing {band}")
+                logger.info(f"{'='*60}")
+
+                band_result = self._reconstruct_single_band(band_data)
+                band_results[band] = band_result
 
         # Package results
         result = SEDReconstructionResult(

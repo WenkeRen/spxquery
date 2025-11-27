@@ -1,0 +1,74 @@
+source_name: unknown
+source_ra: null
+source_dec: null
+reconstruction_date: '2025-11-27T17:33:58.032682'
+auto_tuned: false
+solver_type: torch
+bands_reconstructed:
+- D1
+- D2
+- D3
+- D4
+- D5
+- D6
+wavelet_family: sym6
+D1_lambda_low: 1.0
+D1_lambda_detail: .nan
+D1_lambda_vector:
+- 1.0
+D1_num_swt_operators: 1
+D1_total_penalty: 0.0
+D1_per_scale_penalties:
+- 0.0
+D1_chi_squared_reduced: 2.5412578565360002
+D1_solver_time: 16.429872
+D2_lambda_low: 1.0
+D2_lambda_detail: .nan
+D2_lambda_vector:
+- 1.0
+D2_num_swt_operators: 1
+D2_total_penalty: 0.0
+D2_per_scale_penalties:
+- 0.0
+D2_chi_squared_reduced: 2.5412578565360002
+D2_solver_time: 16.429872
+D3_lambda_low: 1.0
+D3_lambda_detail: .nan
+D3_lambda_vector:
+- 1.0
+D3_num_swt_operators: 1
+D3_total_penalty: 0.0
+D3_per_scale_penalties:
+- 0.0
+D3_chi_squared_reduced: 2.5412578565360002
+D3_solver_time: 16.429872
+D4_lambda_low: 1.0
+D4_lambda_detail: .nan
+D4_lambda_vector:
+- 1.0
+D4_num_swt_operators: 1
+D4_total_penalty: 0.0
+D4_per_scale_penalties:
+- 0.0
+D4_chi_squared_reduced: 2.5412578565360002
+D4_solver_time: 16.429872
+D5_lambda_low: 1.0
+D5_lambda_detail: .nan
+D5_lambda_vector:
+- 1.0
+D5_num_swt_operators: 1
+D5_total_penalty: 0.0
+D5_per_scale_penalties:
+- 0.0
+D5_chi_squared_reduced: 2.5412578565360002
+D5_solver_time: 16.429872
+D6_lambda_low: 1.0
+D6_lambda_detail: .nan
+D6_lambda_vector:
+- 1.0
+D6_num_swt_operators: 1
+D6_total_penalty: 0.0
+D6_per_scale_penalties:
+- 0.0
+D6_chi_squared_reduced: 2.5412578565360002
+D6_solver_time: 16.429872

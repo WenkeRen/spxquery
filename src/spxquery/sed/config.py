@@ -184,6 +184,30 @@ class SEDConfig:
     science_region_weight: float = 1.0  # Full regularization in scientific regions
     transition_width: int = 0  # Width of transition zone (pixels), 0 = hard cutoffs
 
+    # ==========================================
+    # PyTorch Solver Configuration (Deep Spectral Prior)
+    # ==========================================
+    solver_type: str = "cvxpy"  # Options: "cvxpy", "torch"
+
+    # Global reconstruction parameters
+    wavelength_range: Tuple[float, float] = (0.75, 5.0)
+    global_resolution: int = 3000
+    device: str = "mps"  # Options: "cpu", "cuda", "mps"
+
+    # Optimization parameters
+    optimizer: str = "Adam"
+    learning_rate: float = 0.001
+    epochs: int = 3000
+
+    # Deep Prior Architecture
+    dip_noise_std: float = 0.1
+    dip_filters: int = 32
+    dip_depth: int = 3
+
+    # Regularization (CWT)
+    regularization_weight: float = 1.0
+    cwt_scales: List[float] = field(default_factory=lambda: [1.0, 2.0, 3.0])
+
     def __post_init__(self):
         """Validate configuration parameters after initialization."""
         # Validate SWT 4-group regularization weights

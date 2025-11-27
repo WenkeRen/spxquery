@@ -19,10 +19,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 import pywt
 import scipy.sparse as sp
+import torch
 from astropy.constants import c
 
 from .config import DETECTOR_WAVELENGTH_RANGES, SEDConfig
 from .data_loader import BandData
+from .data_structures import PixelObservationData
 
 logger = logging.getLogger(__name__)
 
@@ -848,3 +850,103 @@ def build_all_matrices(
     spatial_weights = compute_spatial_weights(N_extended, edge_info, config)
 
     return H, Psi_operators, weights, wavelength_grid_extended, level_info, edge_info, spatial_weights
+
+
+def build_pixel_observation_dataset(
+    all_band_data: Dict[str, BandData],
+    config: SEDConfig
+) -> PixelObservationData:
+    """
+    Build a flattened dataset of pixel-level observations for global reconstruction.
+    
+    This function decomposes each narrow-band observation into a set of 
+    spectral grid pixels that it covers. The flux is distributed to these
+    pixels as targets, and weights are normalized by coverage.
+    
+    This structure facilitates massively parallel optimization (like regression)
+    instead of sparse matrix multiplication.
+    
+    Parameters
+    ----------
+    all_band_data : Dict[str, BandData]
+        Dictionary mapping band names to BandData objects.
+    config : SEDConfig
+        Configuration with wavelength range and resolution.
+        
+    Returns
+    -------
+    PixelObservationData
+        Dataset containing pixel indices, target fluxes, and weights.
+    """
+    logger.info("Building global pixel observation dataset...")
+    
+    # 1. Generate Global Wavelength Grid
+    lambda_min, lambda_max = config.wavelength_range
+    N = config.global_resolution
+    global_wavelength_grid = np.linspace(lambda_min, lambda_max, N, dtype=np.float64)
+    
+    all_indices = []
+    all_targets = []
+    all_weights = []
+    
+    for band, band_data in all_band_data.items():
+        logger.debug(f"Processing {band} for global dataset...")
+        
+        # Reuse build_measurement_matrix to get sparse H (handles overlap/frequency logic)
+        # This H maps local band observations to the global grid
+        H_band = build_measurement_matrix(band_data, global_wavelength_grid, config)
+        H_coo = H_band.tocoo()
+        
+        # H_coo.row are observation indices (0..M-1)
+        # H_coo.col are pixel indices (0..N-1)
+        # H_coo.data are H_ij values (normalized so sum_j H_ij = 1)
+        
+        # Get observation data
+        y_obs = band_data.flux # (M,)
+        
+        # Build observation weights: 1 / (sigma^2 + eps)
+        w_obs = 1.0 / (band_data.flux_error + config.epsilon_weight)
+        w_obs[~np.isfinite(w_obs)] = 0.0
+        
+        # Map to pixel samples
+        # Each non-zero entry in H creates a "pixel observation"
+        
+        # Indices: Which spectral pixel is being constrained?
+        indices = H_coo.col
+        
+        # Targets: The flux density of the observation applies to the pixel
+        targets = y_obs[H_coo.row]
+        
+        # Weights: Distribute observation weight proportional to H_ij
+        # Loss proxy: sum_i w_i * sum_j H_ij * (y_i - x_j)^2
+        # So weight for sample (i,j) is w_i * H_ij
+        weights = w_obs[H_coo.row] * H_coo.data
+        
+        all_indices.append(indices)
+        all_targets.append(targets)
+        all_weights.append(weights)
+        
+    # Concatenate all samples
+    if not all_indices:
+        raise ValueError("No data found to build dataset")
+        
+    cat_indices = np.concatenate(all_indices)
+    cat_targets = np.concatenate(all_targets)
+    cat_weights = np.concatenate(all_weights)
+    
+    # Convert to Torch Tensors
+    t_indices = torch.from_numpy(cat_indices).long()
+    t_targets = torch.from_numpy(cat_targets).float()
+    t_weights = torch.from_numpy(cat_weights).float()
+    t_grid = torch.from_numpy(global_wavelength_grid).float()
+    
+    dataset = PixelObservationData(
+        pixel_indices=t_indices,
+        pixel_fluxes=t_targets,
+        pixel_weights=t_weights,
+        global_wavelength_grid=t_grid
+    )
+    
+    logger.info(f"Built global dataset: {len(t_indices)} pixel samples from {len(all_band_data)} bands")
+    
+    return dataset
