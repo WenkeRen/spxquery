@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 from scipy.stats import median_abs_deviation
+from astropy.stats import sigma_clip
 
 from .config import SEDConfig
 
@@ -123,7 +124,7 @@ def load_lightcurve_csv(csv_path: Path) -> pd.DataFrame:
     logger.info(f"Loading lightcurve data from {csv_path}")
 
     # Load CSV with metadata preservation
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, comment="#")
 
     # Validate required columns
     required_columns = [
@@ -195,7 +196,8 @@ def apply_rolling_mad_sigma_clip_single_band(
 
     Notes
     -----
-    - If band has fewer measurements than sigma_clip_window, returns empty array.
+    - If band has fewer measurements than sigma_clip_window, applies simple MAD-based
+      sigma clipping to all data as a single window using astropy.stats.sigma_clip.
     - MAD is scaled to equivalent standard deviation (scale='normal').
     - Rolling windows use min_periods = window_size // 4 for edge handling.
     - Iteration stops when no new outliers found or max_iterations reached.
@@ -204,9 +206,27 @@ def apply_rolling_mad_sigma_clip_single_band(
     if len(band_data) < sigma_clip_window:
         logger.warning(
             f"  Band {band_name}: only {len(band_data)} measurements "
-            f"(< window size {sigma_clip_window}), skipping sigma clipping"
+            f"(< window size {sigma_clip_window}), applying simple sigma clipping to all data"
         )
-        return np.array([]), 0
+        # Apply simple sigma clipping to all data as one window
+        clipped_data = sigma_clip(
+            np.asarray(band_data["flux"]),
+            sigma=sigma_clip_sigma,
+            maxiters=max_iterations,
+            cenfunc="median",
+            stdfunc="mad_std",
+            masked=True
+        )
+        outlier_mask = clipped_data.mask
+        outlier_indices = band_data.index[outlier_mask].values
+        n_clipped = len(outlier_indices)
+
+        if n_clipped == 0:
+            logger.info(f"  Band {band_name}: no outliers detected")
+        else:
+            logger.info(f"  Band {band_name}: removed {n_clipped} outliers ({len(band_data) - n_clipped} remaining)")
+
+        return outlier_indices, n_clipped
 
     # Initialize iteration tracking
     all_outlier_indices = []
