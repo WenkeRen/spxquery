@@ -3,25 +3,35 @@ Data structures for SED reconstruction.
 """
 
 from dataclasses import dataclass
+from typing import Tuple
 import torch
 
 @dataclass
-class PixelObservationData:
+class GlobalSpectralData:
     """
-    Container for flattened pixel-level observation data for global reconstruction.
+    Container for global spectral reconstruction data.
+    
+    Stores the sparse measurement matrix H, observed fluxes y, and weights w.
+    H maps the global spectral grid x to observations y: y = H @ x.
     
     Attributes
     ----------
-    pixel_indices : torch.LongTensor
-        Indices into the global spectral grid (shape: N_total_samples).
-    pixel_fluxes : torch.FloatTensor
-        Target flux density for each sample (shape: N_total_samples).
-    pixel_weights : torch.FloatTensor
-        Weight for each sample (shape: N_total_samples).
-    global_wavelength_grid : torch.FloatTensor
-        The global wavelength grid (shape: global_resolution).
+    H_indices : torch.Tensor
+        Indices for sparse H matrix (2, nnz).
+    H_values : torch.Tensor
+        Values for sparse H matrix (nnz).
+    H_shape : Tuple[int, int]
+        Shape of H matrix (M_observations, N_spectral_bins).
+    observations : torch.Tensor
+        Observed flux densities y (M_observations).
+    weights : torch.Tensor
+        Observation weights w (M_observations).
+    global_wavelength_grid : torch.Tensor
+        The global wavelength grid (N_spectral_bins).
     """
-    pixel_indices: torch.Tensor
-    pixel_fluxes: torch.Tensor
-    pixel_weights: torch.Tensor
+    H_indices: torch.Tensor
+    H_values: torch.Tensor
+    H_shape: Tuple[int, int]
+    observations: torch.Tensor
+    weights: torch.Tensor
     global_wavelength_grid: torch.Tensor

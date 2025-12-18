@@ -16,7 +16,7 @@ import yaml
 
 from .config import SEDConfig, DETECTOR_WAVELENGTH_RANGES
 from .data_loader import load_all_bands, BandData
-from .matrices import build_all_matrices, build_pixel_observation_dataset, build_measurement_matrix, build_weight_vector
+from .matrices import build_all_matrices, build_global_observation_data, build_measurement_matrix, build_weight_vector
 from .solver import reconstruct_single_band
 from .solver_torch import solve_global_reconstruction
 from .validation import assess_reconstruction_quality, ValidationMetrics
@@ -330,7 +330,7 @@ class SEDReconstructor:
             
             # 1. Build global pixel observation dataset
             start_time = datetime.now()
-            dataset = build_pixel_observation_dataset(band_data_dict, self.config)
+            dataset = build_global_observation_data(band_data_dict, self.config)
             
             # 2. Solve global reconstruction
             global_spectrum_tensor = solve_global_reconstruction(dataset, self.config)
