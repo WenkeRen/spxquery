@@ -82,9 +82,9 @@ The SWT implementation groups coefficients into 4 physically meaningful categori
 
 ### Core Optimization Problem
 
-$$
-\min_x \left( \underbrace{||W(y - Hx)||_2^2}_{\text{Data Fidelity}} + \sum_{k=0}^{J} \underbrace{\lambda_k ||\Psi_k x||_1}_{\text{SWT Multi-Scale Regularization}} \right)
-$$
+$$ 
+\min_x \left( \underbrace{||W(y - Hx)||_2^2}_{\text{Data Fidelity}} + \sum_{k=0}^{J} \underbrace{\lambda_k ||\Psi_k x||_1}_{\text{SWT Multi-Scale Regularization}} \right) 
+$$ 
 
 **Notation:**
 - $x \in \mathbb{R}^N$: Reconstructed high-resolution spectrum (unknown)
@@ -98,7 +98,7 @@ $$
 
 The measurement matrix incorporates **frequency step normalization** for energy conservation:
 
-$$H_{ij} = T_i(\lambda_j) \times \frac{\Delta\nu_j}{\sum_{k \in W_i} \Delta\nu_k}$$
+$$H_{ij} = T_i(\lambda_j) \times \frac{\Delta\nu_j}{\sum_{k \in W_i} \Delta\nu_k}$$ 
 
 where $\Delta\nu_j$ is the frequency step at wavelength $\lambda_j$ and $W_i$ is the wavelength window for measurement $i$. This ensures:
 - Rows sum to 1.0 (energy conservation)
@@ -418,3 +418,168 @@ The implementation provides a production-ready solution for SPHEREx spectral rec
 - `tuning.py`: Efficient hyperparameter optimization
 
 The system is fully implemented and tested, ready for production use with SPHEREx deep survey data.
+
+# Appendix: Architecture Evolution & Dual-Solver Implementation
+
+## Current State of Implementation (As of `solver_torch.py` Integration)
+
+The `spxquery.sed` module has evolved to support a **dual-solver architecture**, introducing a Deep Image Prior (PyTorch) approach alongside the original Convex Optimization (CVXPY) method. This appendix documents the key deviations from the original design and the risks introduced by this hybrid system.
+
+### 1. Dual Solver Support
+
+The system now exposes a `solver_type` configuration parameter in `SEDConfig`:
+- **`cvxpy` (Default/Legacy)**: The band-wise Convex Optimization approach described in the main body of this document. Uses `solver.py` and sparse matrix math.
+- **`torch` (New/Experimental)**: A Global Deep Image Prior (DIP) approach using PyTorch. Uses `solver_torch.py` and neural network optimization.
+
+### 2. Discrepancy: Scope of Reconstruction
+
+| Feature | CVXPY / SWT (Original Design) | PyTorch / DIP (New Implementation) |
+| :--- | :--- | :--- |
+| **Scope** | **Band-wise Independent**: Each detector band (D1..D6) is reconstructed separately using its own matrix system. | **Global**: Reconstruction solves for a single unified spectrum spanning 0.75-5.0 μm simultaneously. |
+| **Resolution** | Per-band resolution (default 1020 samples per band). | Global resolution (default 3000 samples across full range). |
+| **Data Flow** | Measurements are grouped by band -> `reconstruct_single_band`. | All measurements are aggregated into a single `PixelObservationData` structure. |
+
+### 3. Discrepancy: Mathematical Formulation
+
+The PyTorch solver implements a different mathematical model than the Convex Optimization approach:
+
+Original (CVXPY):
+$$ 
+\min_x \left( ||W(y - Hx)||_2^2 + \sum \lambda_k ||\Psi_k x||_1 \right) 
+$$ 
+
+New (PyTorch):
+$$ 
+\min_\theta \left( ||W(y - \mathcal{P}(G_\theta(z)))||_2^2 + R(G_\theta(z)) \right) 
+$$ 
+Where:
+- $G_\theta(z)$ is a 1D U-Net (Deep Image Prior) transforming fixed noise $z$ into spectrum $x$.
+- $\mathcal{P}$ is a projection operator that maps the global spectrum to specific observed pixels (implemented via `PixelObservationData`).
+- The optimization is over network weights $\theta$ rather than pixel values $x$.
+
+### 4. Discrepancy: Regularization Strategy
+
+| | CVXPY Solver | PyTorch Solver |
+| :--- | :--- | :--- |
+| **Method** | **Stationary Wavelet Transform (SWT)** | **Continuous Wavelet Transform (CWT)** |
+| **Implementation** | `pywt.swt` (Discrete, redundant basis) | `GaussianCWT` (Fixed Conv1d layers, Differentiable) |
+| **Basis Functions** | Symlets (default `sym6`) | Mexican Hat / Ricker Wavelets |
+| **Structure** | 4-Group System (A, B, C, D) | Scale-based CWT weighting |
+
+### 5. Identified Risks & Complexity
+
+1.  **Inconsistent Outputs**: The two solvers may produce systematically different spectral shapes (especially continuum slopes) because `torch` fits globally while `cvxpy` fits locally.
+2.  **Validation Metrics**: The `torch` solver computes a global $\chi^2$ which may mask poor fitting in specific low-SNR bands (e.g., D1), whereas `cvxpy` provides granular per-band quality control.
+3.  **Hardware Dependency**: The `torch` solver is significantly faster on GPU/MPS but may be slower on CPU compared to the highly optimized C-based solvers used by CVXPY (CLARABEL/ECOS).
+4.  **Codebase Bifurcation**: We now maintain two parallel mathematical stacks:
+    - `matrices.py` (Sparse Matrices) vs `data_structures.py` (Pixel Observations)
+    - `solver.py` (Convex Opt) vs `solver_torch.py` (Neural Net)
+    - `regularization.py` (CWT layers) vs `pywt` calls
+
+**Recommendation**: Future development should focus on benchmarking these two approaches against ground-truth simulations to determine if they can be merged or if one should supersede the other.
+
+
+
+# Deprecation Plan: Removal of Legacy CVXPY/SWT Solver
+
+
+
+## 1. Objective
+
+Transition `spxquery.sed` to an exclusive PyTorch-based Deep Image Prior (DIP) architecture. Remove all code, dependencies, and configuration related to the legacy Convex Optimization (CVXPY/SWT) approach.
+
+
+
+## 2. Dependency Management
+
+*   **Remove**: `cvxpy`, `PyWavelets` from `pyproject.toml`.
+
+*   **Keep**: `numpy`, `scipy` (required for sparse matrix construction in validation/data prep), `torch`.
+
+
+
+## 3. Codebase Cleanup
+
+
+
+### A. Configuration (`src/spxquery/sed/config.py`)
+
+*   Remove SWT 4-group parameters: `lambda_continuum`, `lambda_low_features`, `lambda_main_features`, `lambda_noise`.
+
+*   Remove Wavelet parameters: `wavelet_family`, `wavelet_level`, `wavelet_boundary_mode`.
+
+*   Remove CVXPY solver parameters: `solver`, `solver_verbose`, `auto_tune`, grid search lists.
+
+*   Remove `spatial_weight_enabled` and related padding weights (SWT specific edge handling).
+
+*   Remove `resolution_samples` (replaced by `global_resolution` for DIP).
+
+*   Promote `torch` parameters (learning rate, epochs, network depth) to top-level relevance.
+
+
+
+### B. Matrix Construction (`src/spxquery/sed/matrices.py`)
+
+*   **Keep**: `build_measurement_matrix`, `build_pixel_observation_dataset`, `build_frequency_grid`, `compute_frequency_steps`, `build_weight_vector`.
+
+    *   *Note*: `build_measurement_matrix` and `build_weight_vector` are reused for constructing the global validation system.
+
+*   **Remove**: `build_swt_matrices`, `build_smoothness_operator`, `build_all_matrices`, `compute_spatial_weights`.
+
+*   **Refactor**: Remove `edge_info` return values from builders as DIP uses a global grid without per-band edge padding logic.
+
+
+
+### C. File Deletions
+
+*   **`src/spxquery/sed/solver.py`**: Delete file (CVXPY logic).
+
+*   **`src/spxquery/sed/tuning.py`**: Delete file (SWT grid search).
+
+*   **`src/spxquery/sed/hyperparameter_groups.py`**: Delete file (SWT parameter grouping).
+
+
+
+### D. Reconstruction Orchestration (`src/spxquery/sed/reconstruction.py`)
+
+*   Remove `_reconstruct_single_band` method.
+
+*   Refactor `reconstruct_from_csv`:
+
+    *   Remove `if self.config.solver_type == "torch"` branching (make it the only path).
+
+    *   Remove imports of deleted modules (`solver`, `tuning`, `hyperparameter_groups`).
+
+    *   Clean up `BandReconstructionResult` instantiation (remove `wavelet_info`, `per_scale_penalties`, `lambda_vector` reliance).
+
+    *   Ensure metadata saving (`to_yaml`) doesn't look for deleted attributes.
+
+
+
+### E. Visualization (`src/spxquery/sed/plots.py`)
+
+*   Update `plot_reconstructed_spectrum` title generation to remove references to SWT-specific `lambda_vector` indices (e.g., `lambda_vector[0]`).
+
+*   Display generic regularization info (e.g., `regularization_weight`, `epochs`).
+
+
+
+### F. Validation (`src/spxquery/sed/validation.py`)
+
+*   Retain as is. The metric calculations (residuals, chi-squared) are generic and currently used by the PyTorch path.
+
+
+
+### G. Exports (`src/spxquery/sed/__init__.py`)
+
+*   Update `__all__` and imports to reflect deleted classes and functions.
+
+
+
+## 4. Verification Strategy
+
+1.  **Unit Tests**: Verify that the PyTorch solver runs end-to-end on `test_lightcurve.csv`.
+
+2.  **Output Consistency**: Ensure `sed_reconstruction.csv` and `sed_metadata.yaml` are still generated with correct global spectral data.
+
+3.  **CLI Check**: Verify `spxquery` tools don't crash due to missing imports.
