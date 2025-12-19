@@ -2,7 +2,7 @@
 Visualization functions for SED reconstruction diagnostics.
 
 This module provides publication-quality plotting for reconstructed spectra,
-residuals, and quality metrics.
+residuals, and quality metrics for PyTorch-based Deep Image Prior reconstruction.
 """
 
 import logging
@@ -11,9 +11,8 @@ from typing import Dict, Optional, List
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-import scipy.sparse as sp
 
-from .reconstruction import BandReconstructionResult, SEDReconstructionResult
+from .reconstruction import SEDReconstructionResult
 from .data_loader import BandData
 
 logger = logging.getLogger(__name__)
@@ -28,279 +27,329 @@ BAND_WAVELENGTH_RANGES = {
     "D5": (3.83, 4.41),
     "D6": (4.42, 5.00),
 }
+# Band colors for plotting
+BAND_COLORS = {
+    "D1": "#8B4789",  # Purple
+    "D2": "#1f77b4",  # Blue  
+    "D3": "#2ca02c",  # Green
+    "D4": "#ff7f0e",  # Orange
+    "D5": "#d62728",  # Red
+    "D6": "#8B0000",  # Darkred
+}
 
 
 def plot_reconstructed_spectrum(
-    result: BandReconstructionResult,
-    original_data: Optional[BandData] = None,
+    result: SEDReconstructionResult,
     ax: Optional[plt.Axes] = None,
-    show_original: bool = True,
+    show_measurements: bool = True,
+    figsize: tuple = (12, 6),
 ) -> plt.Axes:
     """
-    Plot reconstructed spectrum for a single band.
+    Plot reconstructed spectrum with overlaid measurements.
 
     Parameters
     ----------
-    result : BandReconstructionResult
-        Reconstruction result with wavelength and flux.
-    original_data : BandData, optional
-        Original narrow-band measurements to overlay as scatter points.
+    result : SEDReconstructionResult
+        Reconstruction result with global spectrum and band data.
     ax : plt.Axes, optional
         Axes to plot on. If None, creates new figure.
-    show_original : bool
-        Whether to show original measurements as scatter points.
+    show_measurements : bool
+        Whether to overlay original measurements as scatter points.
+    figsize : tuple
+        Figure size if creating new figure.
 
     Returns
     -------
     plt.Axes
-        Axes object with plot.
+        Axes object with the plot.
     """
     if ax is None:
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=figsize)
 
     # Plot reconstructed spectrum
     ax.plot(
         result.wavelength,
         result.flux,
-        'k-',
+        "k-",
         linewidth=1.5,
-        label=f"Reconstructed ({result.band})",
+        label="Reconstructed spectrum",
         zorder=2,
     )
 
-    # Overlay original measurements if provided
-    if show_original and original_data is not None:
-        ax.errorbar(
-            original_data.wavelength_center,
-            original_data.flux,
-            yerr=original_data.flux_error,
-            fmt='o',
-            markersize=3,
-            alpha=0.5,
-            label="Original measurements",
-            zorder=1,
-        )
+    # Overlay measurements if requested
+    if show_measurements and result.band_data:
+        for band_name, band_data in result.band_data.items():
+            color = BAND_COLORS.get(band_name, "gray")
+            ax.scatter(
+                band_data.wavelength_center,
+                band_data.flux,
+                c=color,
+                s=30,
+                alpha=0.7,
+                edgecolors="black",
+                linewidth=0.5,
+                label=f"{band_name} measurements",
+                zorder=3,
+            )
 
-    # Labels
+    # Add wavelength ranges for bands
+    for band_name, (lambda_min, lambda_max) in BAND_WAVELENGTH_RANGES.items():
+        if band_name in result.band_data:
+            color = BAND_COLORS.get(band_name, "gray")
+            ax.axvspan(
+                lambda_min,
+                lambda_max,
+                alpha=0.1,
+                color=color,
+                zorder=1,
+            )
+
+    # Labels and formatting
     ax.set_xlabel(r"Wavelength ($\mu$m)", fontsize=12)
     ax.set_ylabel(r"$F_\lambda$ ($\mu$Jy)", fontsize=12)
     ax.set_title(
-        f"Band {result.band} Reconstruction\n"
-        f"continuum={result.lambda_vector[0]:.2e}, noise={result.lambda_vector[-1]:.2e}, "
-        f"$\\chi^2_\\nu$={result.validation_metrics.chi_squared_reduced:.2f}",
+        f"Global SED Reconstruction\n"
+        f"DIP: {result.config.dip_filters} filters, {result.config.dip_depth} layers, "
+        f"$\\chi^2_\\nu$={result.validation_metrics.chi2_nu:.3f}",
         fontsize=11,
     )
     ax.legend(loc='best', fontsize=10)
     ax.grid(alpha=0.3)
+    ax.set_xlim(result.config.wavelength_range)
 
     return ax
 
 
 def plot_residuals(
-    result: BandReconstructionResult,
-    ax_raw: Optional[plt.Axes] = None,
-    ax_weighted: Optional[plt.Axes] = None,
-) -> tuple:
-    """
-    Plot residual histograms (raw and weighted).
-
-    Parameters
-    ----------
-    result : BandReconstructionResult
-        Reconstruction result with validation metrics.
-    ax_raw : plt.Axes, optional
-        Axes for raw residuals histogram.
-    ax_weighted : plt.Axes, optional
-        Axes for weighted residuals histogram.
-
-    Returns
-    -------
-    ax_raw : plt.Axes
-        Raw residuals axes.
-    ax_weighted : plt.Axes
-        Weighted residuals axes.
-    """
-    metrics = result.validation_metrics
-
-    # Create axes if not provided
-    if ax_raw is None or ax_weighted is None:
-        fig, (ax_raw, ax_weighted) = plt.subplots(1, 2, figsize=(14, 5))
-
-    # Raw residuals histogram
-    ax_raw.hist(metrics.residuals, bins=50, alpha=0.7, color='steelblue', edgecolor='black')
-    ax_raw.axvline(0, color='red', linestyle='--', linewidth=1.5, label='Zero')
-    ax_raw.set_xlabel(r"Residual ($\mu$Jy)", fontsize=12)
-    ax_raw.set_ylabel("Count", fontsize=12)
-    ax_raw.set_title(
-        f"Raw Residuals ({result.band})\n"
-        f"Mean={metrics.residual_mean:.2f}, Std={metrics.residual_std:.2f}",
-        fontsize=11,
-    )
-    ax_raw.legend(fontsize=10)
-    ax_raw.grid(alpha=0.3)
-
-    # Weighted residuals histogram
-    ax_weighted.hist(
-        metrics.weighted_residuals, bins=50, alpha=0.7, color='coral', edgecolor='black'
-    )
-    ax_weighted.axvline(0, color='red', linestyle='--', linewidth=1.5, label='Zero')
-    ax_weighted.set_xlabel(r"Weighted Residual ($\sigma$ units)", fontsize=12)
-    ax_weighted.set_ylabel("Count", fontsize=12)
-    ax_weighted.set_title(
-        f"Weighted Residuals ({result.band})\n"
-        f"Mean={metrics.weighted_residual_mean:.2f}, Std={metrics.weighted_residual_std:.2f}",
-        fontsize=11,
-    )
-    ax_weighted.legend(fontsize=10)
-    ax_weighted.grid(alpha=0.3)
-
-    return ax_raw, ax_weighted
-
-
-
-
-def plot_band_comparison(
     result: SEDReconstructionResult,
-    figsize: tuple = (16, 10),
-) -> plt.Figure:
+    ax: Optional[plt.Axes] = None,
+    figsize: tuple = (10, 6),
+) -> plt.Axes:
     """
-    Create multi-panel figure comparing all band reconstructions.
+    Plot residuals (observed - model) for all measurements.
 
     Parameters
     ----------
     result : SEDReconstructionResult
-        Full reconstruction result.
+        Reconstruction result with validation metrics.
+    ax : plt.Axes, optional
+        Axes to plot on. If None, creates new figure.
     figsize : tuple
-        Figure size (width, height) in inches.
+        Figure size if creating new figure.
 
     Returns
     -------
-    plt.Figure
-        Figure object with 6 subplots (one per band).
+    plt.Axes
+        Axes object with the plot.
     """
-    n_bands = len(result.band_results)
-    ncols = 3
-    nrows = int(np.ceil(n_bands / ncols))
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
 
-    fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
-    axes = axes.flatten()
+    if not result.band_data:
+        logger.warning("No band data available for residual plotting")
+        return ax
 
-    for idx, (band, band_result) in enumerate(sorted(result.band_results.items())):
-        ax = axes[idx]
+    # Collect residuals for all bands
+    all_wavelengths = []
+    all_residuals = []
+    all_colors = []
 
-        # Plot reconstructed spectrum
-        ax.plot(
-            band_result.wavelength,
-            band_result.flux,
-            'k-',
-            linewidth=1.5,
-        )
+    for band_name, band_data in result.band_data.items():
+        color = BAND_COLORS.get(band_name, "gray")
 
-        ax.set_xlabel(r"Wavelength ($\mu$m)", fontsize=10)
-        ax.set_ylabel(r"$F_\lambda$ ($\mu$Jy)", fontsize=10)
-        ax.set_title(
-            f"{band}: $\\chi^2_\\nu$={band_result.validation_metrics.chi_squared_reduced:.2f}",
-            fontsize=10,
-        )
-        ax.grid(alpha=0.3)
+        # Interpolate reconstructed spectrum at measurement wavelengths
+        model_flux = np.interp(band_data.wavelength_center, result.wavelength, result.flux)
+        residuals = band_data.flux - model_flux
 
-    # Hide unused subplots
-    for idx in range(n_bands, len(axes)):
-        axes[idx].axis('off')
+        all_wavelengths.extend(band_data.wavelength_center)
+        all_residuals.extend(residuals)
+        all_colors.extend([color] * len(band_data.wavelength_center))
 
-    fig.suptitle(
-        f"Band-by-Band Reconstructions: {result.source_name}",
-        fontsize=14,
-        fontweight='bold',
+    # Plot residuals
+    for i, (wl, res, color) in enumerate(zip(all_wavelengths, all_residuals, all_colors)):
+        ax.scatter(wl, res, c=color, s=20, alpha=0.7, edgecolors="black", linewidth=0.5)
+
+    # Add zero line
+    ax.axhline(0, color='red', linestyle='--', linewidth=1.5, label='Zero residual', zorder=1)
+
+    # Labels and formatting
+    ax.set_xlabel(r"Wavelength ($\mu$m)", fontsize=12)
+    ax.set_ylabel(r"Residual ($\mu$Jy)", fontsize=12)
+    ax.set_title(
+        f"Measurement Residuals\n"
+        f"Mean = {np.mean(all_residuals):.2e} $\\mu$Jy, "
+        f"Std = {np.std(all_residuals):.2e} $\\mu$Jy",
+        fontsize=11,
     )
-    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    ax.legend(loc='best', fontsize=10)
+    ax.grid(alpha=0.3)
+    ax.set_xlim(result.config.wavelength_range)
 
-    return fig
+    return ax
+
+
+def plot_weighted_residuals(
+    result: SEDReconstructionResult,
+    ax: Optional[plt.Axes] = None,
+    figsize: tuple = (10, 6),
+) -> plt.Axes:
+    """
+    Plot weighted residuals in units of measurement uncertainties.
+
+    Parameters
+    ----------
+    result : SEDReconstructionResult
+        Reconstruction result with validation metrics.
+    ax : plt.Axes, optional
+        Axes to plot on. If None, creates new figure.
+    figsize : tuple
+        Figure size if creating new figure.
+
+    Returns
+    -------
+    plt.Axes
+        Axes object with the plot.
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+
+    if not result.band_data:
+        logger.warning("No band data available for weighted residual plotting")
+        return ax
+
+    # Collect weighted residuals for all bands
+    all_wavelengths = []
+    all_weighted_residuals = []
+    all_colors = []
+
+    for band_name, band_data in result.band_data.items():
+        color = BAND_COLORS.get(band_name, "gray")
+
+        # Interpolate reconstructed spectrum at measurement wavelengths
+        model_flux = np.interp(band_data.wavelength_center, result.wavelength, result.flux)
+        residuals = band_data.flux - model_flux
+        weighted_residuals = residuals / band_data.flux_error
+
+        all_wavelengths.extend(band_data.wavelength_center)
+        all_weighted_residuals.extend(weighted_residuals)
+        all_colors.extend([color] * len(band_data.wavelength_center))
+
+    # Plot weighted residuals
+    for i, (wl, w_res, color) in enumerate(zip(all_wavelengths, all_weighted_residuals, all_colors)):
+        ax.scatter(wl, w_res, c=color, s=20, alpha=0.7, edgecolors="black", linewidth=0.5)
+
+    # Add zero line and ±1, ±2 sigma lines
+    ax.axhline(0, color='red', linestyle='--', linewidth=1.5, label='Zero', zorder=1)
+    ax.axhline(1, color='orange', linestyle=':', linewidth=1, alpha=0.7, label='±1σ')
+    ax.axhline(-1, color='orange', linestyle=':', linewidth=1, alpha=0.7)
+    ax.axhline(2, color='yellow', linestyle=':', linewidth=1, alpha=0.5, label='±2σ')
+    ax.axhline(-2, color='yellow', linestyle=':', linewidth=1, alpha=0.5)
+
+    # Labels and formatting
+    ax.set_xlabel(r"Wavelength ($\mu$m)", fontsize=12)
+    ax.set_ylabel(r"Weighted Residual ($\sigma$)", fontsize=12)
+    ax.set_title(
+        f"Weighted Residuals\n"
+        f"Mean = {np.mean(all_weighted_residuals):.3f}, "
+        f"Std = {np.std(all_weighted_residuals):.3f}",
+        fontsize=11,
+    )
+    ax.legend(loc='best', fontsize=10)
+    ax.grid(alpha=0.3)
+    ax.set_xlim(result.config.wavelength_range)
+
+    return ax
 
 
 def plot_diagnostic_summary(
     result: SEDReconstructionResult,
     figsize: tuple = (16, 12),
+    save_path: Optional[Path] = None,
 ) -> plt.Figure:
     """
-    Create comprehensive diagnostic figure with multiple panels.
-
-    Layout:
-    - Top row: Individual band spectra (3 bands)
-    - Middle row: Individual band spectra (remaining bands)
-    - Bottom row: Residuals for first band (example)
+    Create comprehensive diagnostic plot with multiple panels.
 
     Parameters
     ----------
     result : SEDReconstructionResult
-        Full reconstruction result.
+        Reconstruction result with all diagnostics.
     figsize : tuple
         Figure size (width, height) in inches.
+    save_path : Path, optional
+        Path to save the figure. If None, doesn't save.
 
     Returns
     -------
     plt.Figure
-        Figure object with diagnostic plots.
+        Figure object with diagnostic panels.
     """
     fig = plt.figure(figsize=figsize)
-    gs = GridSpec(3, 3, figure=fig, hspace=0.35, wspace=0.3)
+    gs = GridSpec(3, 2, figure=fig, hspace=0.3, wspace=0.3)
 
-    # Top row: Band comparison (first 3 bands)
-    band_list = sorted(result.band_results.keys())
-    for idx, band in enumerate(band_list[:3]):
-        ax = fig.add_subplot(gs[0, idx])
-        band_result = result.band_results[band]
-        ax.plot(band_result.wavelength, band_result.flux, 'k-', linewidth=1)
-        ax.set_title(f"{band}", fontsize=10)
-        ax.set_xlabel(r"Wavelength ($\mu$m)", fontsize=9)
-        ax.set_ylabel(r"$F_\lambda$ ($\mu$Jy)", fontsize=9)
-        ax.grid(alpha=0.3)
+    # Panel 1: Reconstructed spectrum
+    ax1 = fig.add_subplot(gs[0, :])
+    plot_reconstructed_spectrum(result, ax=ax1, show_measurements=True)
 
-    # Middle row: Remaining bands
-    for idx, band in enumerate(band_list[3:6]):
-        ax = fig.add_subplot(gs[1, idx])
-        band_result = result.band_results[band]
-        ax.plot(band_result.wavelength, band_result.flux, 'k-', linewidth=1)
-        ax.set_title(f"{band}", fontsize=10)
-        ax.set_xlabel(r"Wavelength ($\mu$m)", fontsize=9)
-        ax.set_ylabel(r"$F_\lambda$ ($\mu$Jy)", fontsize=9)
-        ax.grid(alpha=0.3)
+    # Panel 2: Raw residuals
+    ax2 = fig.add_subplot(gs[1, 0])
+    plot_residuals(result, ax=ax2)
 
-    # Bottom row: Residuals for first band
-    if band_list:
-        first_band = band_list[0]
-        first_result = result.band_results[first_band]
+    # Panel 3: Weighted residuals
+    ax3 = fig.add_subplot(gs[1, 1])
+    plot_weighted_residuals(result, ax=ax3)
 
-        ax_raw = fig.add_subplot(gs[2, 0])
-        ax_weighted = fig.add_subplot(gs[2, 1])
-        plot_residuals(first_result, ax_raw=ax_raw, ax_weighted=ax_weighted)
+    # Panel 4: Residual histogram
+    ax4 = fig.add_subplot(gs[2, 0])
+    all_weighted_residuals = []
+    for band_data in result.band_data.values():
+        model_flux = np.interp(band_data.wavelength_center, result.wavelength, result.flux)
+        residuals = (band_data.flux - model_flux) / band_data.flux_error
+        all_weighted_residuals.extend(residuals)
 
-        # Chi-squared summary text
-        ax_text = fig.add_subplot(gs[2, 2])
-        ax_text.axis('off')
+    ax4.hist(all_weighted_residuals, bins=50, alpha=0.7, color='steelblue', edgecolor='black')
+    ax4.axvline(0, color='red', linestyle='--', linewidth=1.5, label='Zero')
+    ax4.axvline(np.mean(all_weighted_residuals), color='orange', linestyle='-', linewidth=1.5,
+                label=f'Mean = {np.mean(all_weighted_residuals):.3f}')
+    ax4.set_xlabel("Weighted Residual ($\\sigma$)")
+    ax4.set_ylabel("Count")
+    ax4.set_title("Weighted Residual Distribution")
+    ax4.legend()
+    ax4.grid(alpha=0.3)
 
-        summary_text = "Reconstruction Quality\n" + "="*25 + "\n\n"
-        for band in band_list:
-            metrics = result.band_results[band].validation_metrics
-            summary_text += (
-                f"{band}:\n"
-                f"  $\\chi^2_\\nu$ = {metrics.chi_squared_reduced:.3f}\n"
-                f"  dof = {metrics.degrees_of_freedom}\n\n"
-            )
+    # Panel 5: Quality metrics summary
+    ax5 = fig.add_subplot(gs[2, 1])
+    ax5.axis('off')
 
-        ax_text.text(
-            0.1, 0.9, summary_text,
-            transform=ax_text.transAxes,
-            fontsize=9,
-            verticalalignment='top',
-            family='monospace',
-        )
+    metrics_text = f"""Quality Metrics:
 
-    fig.suptitle(
-        f"SED Reconstruction Diagnostics: {result.source_name}",
-        fontsize=14,
-        fontweight='bold',
-    )
+$\\chi^2_\\nu$ = {result.validation_metrics.chi2_nu:.3f}
+Solver: {result.solver_status}
+Time: {result.solver_time:.2f} s
+
+Configuration:
+DIP Filters: {result.config.dip_filters}
+DIP Depth: {result.config.dip_depth}
+Regularization: {result.config.regularization_weight}
+Learning Rate: {result.config.learning_rate}
+Epochs: {result.config.epochs}
+Device: {result.config.device}
+
+Data:
+Bands: {len(result.band_data)}
+Total Observations: {sum(band.n_measurements for band in result.band_data.values())}
+Resolution: {result.config.global_resolution}
+"""
+
+    ax5.text(0.1, 0.9, metrics_text, transform=ax5.transAxes, fontsize=10,
+             verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.5))
+
+    # Overall title
+    fig.suptitle("SED Reconstruction Diagnostic Summary", fontsize=14, fontweight='bold')
+
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved diagnostic plot to {save_path}")
 
     return fig
 
@@ -308,46 +357,36 @@ def plot_diagnostic_summary(
 def save_all_plots(
     result: SEDReconstructionResult,
     output_dir: Path,
-    prefix: str = "sed",
-) -> List[Path]:
+    formats: List[str] = ["png", "pdf"],
+) -> None:
     """
-    Generate and save all diagnostic plots.
+    Save all standard plots to files.
 
     Parameters
     ----------
     result : SEDReconstructionResult
-        Full reconstruction result.
+        Reconstruction result to plot.
     output_dir : Path
-        Output directory for plot files.
-    prefix : str
-        Filename prefix.
-
-    Returns
-    -------
-    List[Path]
-        List of saved plot file paths.
+        Directory to save plots.
+    formats : List[str]
+        File formats to save (e.g., ['png', 'pdf', 'svg']).
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    saved_files = []
+    # Save diagnostic summary
+    diag_fig = plot_diagnostic_summary(result)
+    for fmt in formats:
+        diag_path = output_dir / f"sed_diagnostic.{fmt}"
+        diag_fig.savefig(diag_path, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved diagnostic plot to {diag_path}")
 
-    # Diagnostic summary
-    fig_summary = plot_diagnostic_summary(result)
-    path_summary = output_dir / f"{prefix}_diagnostic_summary.png"
-    fig_summary.savefig(path_summary, dpi=150, bbox_inches='tight')
-    plt.close(fig_summary)
-    saved_files.append(path_summary)
-    logger.info(f"Saved diagnostic summary to {path_summary}")
+    # Save individual spectrum plot
+    spectrum_fig, ax = plt.subplots(figsize=(12, 6))
+    plot_reconstructed_spectrum(result, ax=ax)
+    for fmt in formats:
+        spec_path = output_dir / f"sed_spectrum.{fmt}"
+        spectrum_fig.savefig(spec_path, dpi=300, bbox_inches='tight')
+        logger.info(f"Saved spectrum plot to {spec_path}")
 
-    # Band comparison
-    fig_comparison = plot_band_comparison(result)
-    path_comparison = output_dir / f"{prefix}_band_comparison.png"
-    fig_comparison.savefig(path_comparison, dpi=150, bbox_inches='tight')
-    plt.close(fig_comparison)
-    saved_files.append(path_comparison)
-    logger.info(f"Saved band comparison to {path_comparison}")
-
-    logger.info(f"Saved {len(saved_files)} plot files to {output_dir}")
-
-    return saved_files
+    plt.close('all')

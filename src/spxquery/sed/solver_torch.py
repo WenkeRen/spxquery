@@ -3,6 +3,7 @@ PyTorch solver for Deep Image Prior reconstruction.
 """
 
 import logging
+import time
 
 import torch
 import torch.nn as nn
@@ -141,7 +142,7 @@ class SpectralModel(nn.Module):
         return self.net(self.z).squeeze()
 
 
-def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig) -> torch.Tensor:
+def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     """
     Solve for global spectrum using Deep Image Prior.
 
@@ -154,8 +155,11 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig) -> 
 
     Returns
     -------
-    torch.Tensor
-        Reconstructed spectrum (shape: global_resolution).
+    tuple
+        (result_spectrum, solver_status, solver_time) where:
+        - result_spectrum: torch.Tensor, reconstructed spectrum (shape: global_resolution)
+        - solver_status: str, status message
+        - solver_time: float, computation time in seconds
     """
     device = torch.device(config.device if torch.backends.mps.is_available() or torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
@@ -188,6 +192,9 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig) -> 
 
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+
+    # Start timing
+    start_time = time.time()
 
     # Training loop
     logger.info(f"Starting DIP optimization ({config.epochs} epochs)...")
@@ -252,6 +259,17 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig) -> 
                 {"Loss": f"{current_loss:.4e}", "Data": f"{loss_data.item():.4e}", "Reg": f"{loss_reg.item():.4e}"}
             )
 
-    logger.info(f"Optimization complete. Best Loss: {best_loss:.4e}")
+    # End timing
+    end_time = time.time()
+    solver_time = end_time - start_time
 
-    return best_spectrum.cpu()
+    # Create status message
+    if best_spectrum is not None:
+        solver_status = "success"
+    else:
+        solver_status = "failed"
+        best_spectrum = torch.zeros(config.global_resolution)
+
+    logger.info(f"Optimization complete. Status: {solver_status}, Time: {solver_time:.2f}s, Best Loss: {best_loss:.4e}")
+
+    return best_spectrum.cpu(), solver_status, solver_time

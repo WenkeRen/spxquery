@@ -2,22 +2,24 @@
 SED (Spectral Energy Distribution) reconstruction module for SPHEREx.
 
 This module provides tools to reconstruct high-resolution spectra from
-SPHEREx narrow-band photometry using regularized convex optimization.
+SPHEREx narrow-band photometry using PyTorch-based Deep Image Prior
+with Continuous Wavelet Transform regularization.
 
-The reconstruction problem is formulated as:
-    min_x ( ||w(y - Hx)||_2^2 + lambda1*||x||_1 + lambda2*||D2 x||_2^2 )
+The reconstruction problem is formulated as a global optimization:
+    min_θ ||W(y - H·G_θ(z))||_2^2 + R(G_θ(z))
 
 where:
     - Data fidelity: weighted chi-squared (L2 norm)
-    - L1 regularization: sparsity prior for emission lines
-    - L2 regularization: smoothness prior for continuum
+    - G_θ(z): Deep Image Prior neural network generating spectrum
+    - R(G_θ(z)): CWT regularization for multi-scale constraints
+    - W: Observation weights based on measurement uncertainties
 
 Main Classes
 ------------
-SEDConfig : Configuration dataclass with all reconstruction parameters
+SEDConfig : Configuration dataclass with PyTorch DIP parameters
 SEDReconstructor : Main orchestrator for the reconstruction pipeline
 SEDReconstructionResult : Container for reconstruction outputs
-BandReconstructionResult : Single-band reconstruction result
+ValidationMetrics : Quality assessment metrics
 
 Main Functions
 --------------
@@ -29,22 +31,26 @@ Examples
 Basic usage with default settings:
 
 >>> from spxquery.sed import SEDConfig, SEDReconstructor
->>> config = SEDConfig()
+>>> config = SEDConfig(epochs=3000, regularization_weight=1.0)
 >>> reconstructor = SEDReconstructor(config)
 >>> result = reconstructor.reconstruct_from_csv("lightcurve.csv")
 >>> result.save_all("output/")
 
-With auto-tuning enabled:
+With custom Deep Image Prior architecture:
 
->>> config = SEDConfig(auto_tune=True)
+>>> config = SEDConfig(
+...     dip_filters=64,  # More filters in U-Net
+...     dip_depth=4,     # Deeper network
+...     regularization_weight=2.0,
+...     cwt_scales=[1.0, 2.0, 4.0, 8.0]
+... )
 >>> reconstructor = SEDReconstructor(config)
 >>> result = reconstructor.reconstruct_from_csv("lightcurve.csv")
 
-Using custom hyperparameters:
+One-line convenience function:
 
->>> config = SEDConfig(lambda1=0.5, lambda2=50.0)
->>> reconstructor = SEDReconstructor(config)
->>> result = reconstructor.reconstruct_from_csv("lightcurve.csv")
+>>> from spxquery.sed import reconstruct_sed_from_csv
+>>> result = reconstruct_sed_from_csv("lightcurve.csv")
 """
 
 # Version
@@ -57,15 +63,12 @@ from .config import SEDConfig, export_default_sed_config
 from .reconstruction import (
     SEDReconstructor,
     SEDReconstructionResult,
-    BandReconstructionResult,
     reconstruct_sed_from_csv,
 )
 
 # Data structures
 from .data_loader import BandData
 from .validation import ValidationMetrics
-from .solver import ReconstructionResult
-from .tuning import TuningResult
 
 # Public API
 __all__ = [
@@ -77,12 +80,9 @@ __all__ = [
     # Main classes
     "SEDReconstructor",
     "SEDReconstructionResult",
-    "BandReconstructionResult",
     # Convenience function
     "reconstruct_sed_from_csv",
     # Data structures
     "BandData",
     "ValidationMetrics",
-    "ReconstructionResult",
-    "TuningResult",
 ]
