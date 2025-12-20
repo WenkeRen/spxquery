@@ -3,6 +3,7 @@ PyTorch solver for Deep Image Prior reconstruction.
 """
 
 import logging
+import math
 import time
 
 import torch
@@ -15,6 +16,100 @@ from .data_structures import GlobalSpectralData
 from .regularization import GaussianCWT
 
 logger = logging.getLogger(__name__)
+
+
+def create_learning_rate_scheduler(optimizer, config: SEDConfig):
+    """
+    Create a learning rate scheduler based on configuration.
+
+    Parameters
+    ----------
+    optimizer : torch.optim.Optimizer
+        PyTorch optimizer to wrap with scheduler.
+    config : SEDConfig
+        Configuration containing scheduler parameters.
+
+    Returns
+    -------
+    torch.optim.lr_scheduler._LRScheduler or None
+        Learning rate scheduler instance, or None if no scheduler is specified.
+    """
+    if config.learning_rate_scheduler_type == "none":
+        return None
+
+    class CosineWarmupScheduler:
+        """
+        Custom learning rate scheduler with linear warmup and cosine decay.
+
+        This scheduler implements:
+        - Linear warmup from 0 to peak learning rate
+        - Cosine annealing from peak to minimum learning rate
+        """
+
+        def __init__(self, optimizer, warmup_epochs, total_epochs, min_lr_factor):
+            self.optimizer = optimizer
+            self.warmup_epochs = warmup_epochs
+            self.total_epochs = total_epochs
+            self.min_lr_factor = min_lr_factor
+            self.base_lrs = [group["lr"] for group in optimizer.param_groups]
+            self.current_epoch = 0
+
+        def step(self):
+            """Update learning rates based on current epoch."""
+            if self.current_epoch < self.warmup_epochs:
+                # Linear warmup phase
+                lr_factor = self.current_epoch / self.warmup_epochs
+            else:
+                # Cosine decay phase
+                decay_progress = (self.current_epoch - self.warmup_epochs) / (self.total_epochs - self.warmup_epochs)
+                decay_progress = min(decay_progress, 1.0)  # Clamp to [0, 1]
+                lr_factor = self.min_lr_factor + 0.5 * (1 - self.min_lr_factor) * (
+                    1 + math.cos(math.pi * decay_progress)
+                )
+
+            # Update learning rates for all parameter groups
+            for i, param_group in enumerate(self.optimizer.param_groups):
+                param_group["lr"] = self.base_lrs[i] * lr_factor
+
+            self.current_epoch += 1
+
+        def get_last_lr(self):
+            """Get current learning rates."""
+            return [group["lr"] for group in self.optimizer.param_groups]
+
+        def state_dict(self):
+            """Get scheduler state dictionary for saving/loading."""
+            return {
+                "warmup_epochs": self.warmup_epochs,
+                "total_epochs": self.total_epochs,
+                "min_lr_factor": self.min_lr_factor,
+                "base_lrs": self.base_lrs,
+                "current_epoch": self.current_epoch,
+            }
+
+        def load_state_dict(self, state_dict):
+            """Load scheduler state from dictionary."""
+            self.warmup_epochs = state_dict["warmup_epochs"]
+            self.total_epochs = state_dict["total_epochs"]
+            self.min_lr_factor = state_dict["min_lr_factor"]
+            self.base_lrs = state_dict["base_lrs"]
+            self.current_epoch = state_dict["current_epoch"]
+
+    if config.learning_rate_scheduler_type == "cosine":
+        # Cosine annealing without warmup
+        return torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=config.epochs, eta_min=config.learning_rate * config.learning_rate_min_factor
+        )
+    elif config.learning_rate_scheduler_type == "cosine_warmup":
+        # Linear warmup + cosine decay
+        return CosineWarmupScheduler(
+            optimizer,
+            warmup_epochs=config.learning_rate_warmup_epochs,
+            total_epochs=config.epochs,
+            min_lr_factor=config.learning_rate_min_factor,
+        )
+    else:
+        raise ValueError(f"Unknown scheduler type: {config.learning_rate_scheduler_type}")
 
 
 class SpectralUNet(nn.Module):
@@ -67,6 +162,8 @@ class SpectralUNet(nn.Module):
 
             # Upsample
             self.upsamples.append(nn.Upsample(scale_factor=2, mode="linear", align_corners=True))
+            # self.upsamples.append(nn.ConvTranspose1d(prev_filters, curr_filters, kernel_size=4, stride=2, padding=1))
+            # self.upsamples.append(nn.Upsample(scale_factor=2, mode="nearest"))
 
             # Convolution (input channels = prev_filters from upsample + prev_filters from skip = 2*prev_filters?? No)
             # Skip connection brings 'curr_filters' channels. Upsample brings 'prev_filters' (which is 2*curr).
@@ -166,11 +263,13 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
     # Check for MPS sparse limitations
     # PyTorch on MPS often lacks sparse operations like mv / addmv
-    use_sparse_cpu_fallback = (device.type == 'mps')
-    
+    use_sparse_cpu_fallback = device.type == "mps"
+
     if use_sparse_cpu_fallback:
-        logger.info("MPS detected: Falling back to CPU for sparse matrix operations to avoid 'aten::addmv_' NotImplementedError.")
-        sparse_device = torch.device('cpu')
+        logger.info(
+            "MPS detected: Falling back to CPU for sparse matrix operations to avoid 'aten::addmv_' NotImplementedError."
+        )
+        sparse_device = torch.device("cpu")
     else:
         sparse_device = device
 
@@ -182,7 +281,7 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
     # Construct sparse H tensor on sparse_device
     H_sparse = torch.sparse_coo_tensor(H_indices, H_values, data.H_shape, device=sparse_device)
-    
+
     # Initialize model on main device (can be MPS)
     n_pixels = config.global_resolution
     model = SpectralModel(n_pixels, config).to(device)
@@ -193,6 +292,15 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
 
+    # Learning rate scheduler
+    scheduler = create_learning_rate_scheduler(optimizer, config)
+    if scheduler is not None:
+        logger.info(f"Using learning rate scheduler: {config.learning_rate_scheduler_type}")
+        if config.learning_rate_scheduler_type in ["cosine_warmup", "cosine"]:
+            logger.info(
+                f"Warmup epochs: {config.learning_rate_warmup_epochs}, Min LR factor: {config.learning_rate_min_factor}"
+            )
+
     # Start timing
     start_time = time.time()
 
@@ -200,11 +308,14 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     logger.info(f"Starting DIP optimization ({config.epochs} epochs)...")
 
     # Compute data characteristic scale for adaptive normalization (scalar)
-    flux_scale = torch.std(observations) + 1e-6  # Add small value to avoid division by zero
+    # Robust normalization using median absolute deviation (less sensitive to outliers)
+    median_obs = torch.median(observations)
+    mad = torch.median(torch.abs(observations - median_obs))
+    flux_scale = mad * 1.4826 + 1e-6  # 1.4826 converts MAD to std equivalent for normal distribution
     # Copy to main device for model normalization use
     flux_scale_device = flux_scale.to(device)
 
-    logger.info(f"Data flux scale (std): {flux_scale.item():.4e}")
+    logger.info(f"Data flux scale (MAD-based): {flux_scale.item():.4e}")
 
     best_loss = float("inf")
     best_spectrum = None
@@ -246,7 +357,15 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
         # Backward
         loss.backward()
+
+        # Gradient clipping to prevent explosion
+        # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+
         optimizer.step()
+
+        # Learning rate scheduler step
+        if scheduler is not None:
+            scheduler.step()
 
         # Logging
         current_loss = loss.item()
@@ -255,9 +374,15 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
             best_spectrum = spectrum.detach().clone()
 
         if epoch % 100 == 0:
-            pbar.set_postfix(
-                {"Loss": f"{current_loss:.4e}", "Data": f"{loss_data.item():.4e}", "Reg": f"{loss_reg.item():.4e}"}
-            )
+            # Get current learning rate for logging
+            current_lr = optimizer.param_groups[0]["lr"]
+            log_dict = {
+                "Loss": f"{current_loss:.4e}",
+                "Data": f"{loss_data.item():.4e}",
+                "Reg": f"{loss_reg.item():.4e}",
+                "LR": f"{current_lr:.2e}",
+            }
+            pbar.set_postfix(log_dict)
 
     # End timing
     end_time = time.time()

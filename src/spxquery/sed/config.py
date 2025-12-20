@@ -46,9 +46,17 @@ class SEDConfig:
     optimizer : str
         PyTorch optimizer for DIP training. Default: 'Adam'.
     learning_rate : float
-        Learning rate for optimizer. Default: 0.001.
+        Peak learning rate for optimizer. Default: 0.001.
     epochs : int
         Number of training iterations. Default: 3000.
+    learning_rate_scheduler_type : str
+        Learning rate scheduler type. Options: 'none', 'cosine', 'cosine_warmup'.
+        Default: 'cosine_warmup' (5% linear warmup + cosine decay).
+    learning_rate_warmup_epochs : int
+        Number of epochs for linear warmup phase. Default: 150 (5% of 3000).
+    learning_rate_min_factor : float
+        Minimum learning rate as fraction of peak for cosine decay.
+        Default: 0.01 (1% of peak learning rate).
     dip_noise_std : float
         Standard deviation of input noise for Deep Image Prior. Default: 0.1.
     dip_filters : int
@@ -99,6 +107,11 @@ class SEDConfig:
     learning_rate: float = 0.001
     epochs: int = 3000
 
+    # Learning rate scheduling parameters
+    learning_rate_scheduler_type: str = "cosine_warmup"  # Options: "none", "cosine", "cosine_warmup"
+    learning_rate_warmup_epochs: int = 150  # 5% of default 3000 epochs
+    learning_rate_min_factor: float = 0.01  # Minimum LR as fraction of peak (1%)
+
     # Deep Prior Architecture
     dip_noise_std: float = 0.1
     dip_filters: int = 32
@@ -148,6 +161,17 @@ class SEDConfig:
             raise ValueError(f"learning_rate must be positive, got {self.learning_rate}")
         if self.epochs <= 0:
             raise ValueError(f"epochs must be positive, got {self.epochs}")
+
+        # Validate learning rate scheduling parameters
+        valid_schedulers = ["none", "cosine", "cosine_warmup"]
+        if self.learning_rate_scheduler_type not in valid_schedulers:
+            raise ValueError(f"learning_rate_scheduler_type must be one of {valid_schedulers}, got '{self.learning_rate_scheduler_type}'")
+        if self.learning_rate_warmup_epochs < 0:
+            raise ValueError(f"learning_rate_warmup_epochs must be non-negative, got {self.learning_rate_warmup_epochs}")
+        if self.learning_rate_warmup_epochs >= self.epochs:
+            raise ValueError(f"learning_rate_warmup_epochs ({self.learning_rate_warmup_epochs}) must be less than epochs ({self.epochs})")
+        if self.learning_rate_min_factor <= 0 or self.learning_rate_min_factor >= 1:
+            raise ValueError(f"learning_rate_min_factor must be between 0 and 1 (exclusive), got {self.learning_rate_min_factor}")
 
         # Validate Deep Prior Architecture
         if self.dip_noise_std < 0:
