@@ -1,24 +1,25 @@
 # SED Reconstruction Module
 
-High-resolution spectral reconstruction from SPHEREx narrow-band photometry using convex optimization.
+High-resolution spectral reconstruction from SPHEREx narrow-band photometry using PyTorch Deep Image Prior optimization.
 
 ## Overview
 
-This module reconstructs high-resolution spectra from SPHEREx's randomly-sampled narrow-band measurements using regularized least-squares optimization. The method is particularly powerful for the NEP/SEP deep fields where individual sources have ~40,000 measurements spanning 0.75-5.0 microns.
+This module reconstructs high-resolution spectra from SPHEREx's randomly-sampled narrow-band measurements using Deep Image Prior (DIP) neural network optimization with Continuous Wavelet Transform (CWT) regularization. The method is particularly powerful for the NEP/SEP deep fields where individual sources have ~40,000 measurements spanning 0.75-5.0 microns, reconstructed as a unified global spectrum.
 
 ## Mathematical Formulation
 
 The reconstruction solves:
 
 $$
-min_x ( ||w(y - Hx)||_2^2 + \sum_{k=0}^{J} \lambda_k ||\Psi_k x||_1 )
+\min_\theta \left( ||W(y - \mathcal{P}(G_\theta(z)))||_2^2 + R(G_\theta(z)) \right)
 $$
 
 where:
 
-- **Data fidelity**: Weighted chi-squared (L2 norm)
-- **SWT regularization**: Multi-scale sparsity prior using Stationary Wavelet Transform
-- **4-group system**: Different regularization weights for continuum, large features, emission lines, and noise
+- **Data fidelity**: Weighted chi-squared (L2 norm) between observed photometry and neural network output
+- **Deep Image Prior**: U-Net neural network $G_\theta$ with fixed input noise $z$ generates spectrum
+- **CWT regularization**: Multi-scale sparsity prior using Continuous Wavelet Transform with Mexican Hat wavelets
+- **Global reconstruction**: Single unified spectrum spanning 0.75-5.0 μm
 
 ## Quick Start
 
@@ -33,45 +34,16 @@ reconstructor = SEDReconstructor(config)
 result = reconstructor.reconstruct_from_csv("lightcurve.csv")
 result.save_all("output/")
 
-# With auto-tuning
-config = SEDConfig(auto_tune=True)
+# Custom DIP parameters
+config = SEDConfig(
+    epochs=5000,
+    learning_rate=0.001,
+    regularization_weight=2.0,
+    global_resolution=4000
+)
 reconstructor = SEDReconstructor(config)
 result = reconstructor.reconstruct_from_csv("lightcurve.csv")
-
-# Custom hyperparameters
-config = SEDConfig(lambda_continuum=0.05, lambda_main_features=20.0, resolution_samples=2040)
-reconstructor = SEDReconstructor(config)
-result = reconstructor.reconstruct_from_csv("lightcurve.csv")
 ```
-
-## Module Structure
-
-```
-sed/
-├── __init__.py          - Module exports
-├── config.py            - SEDConfig dataclass
-├── data_loader.py       - CSV loading and quality filtering
-├── matrices.py          - H matrix and SWT operator construction
-├── solver.py            - CVXPY optimization
-├── validation.py        - Residual analysis and diagnostics
-├── tuning.py            - Grid search hyperparameter tuning
-├── reconstruction.py    - Main SEDReconstructor orchestrator
-├── plots.py             - Diagnostic visualization
-└── README.md            - This file
-```
-
-## Configuration Parameters
-
-### Key Parameters
-
-- `lambda_continuum` (float): Approximation coefficients regularization (default: 0.1)
-- `lambda_low_features` (float): Coarse detail regularization (default: 1.0)
-- `lambda_main_features` (float): Medium detail regularization (default: 5.0)
-- `lambda_noise` (float): Fine detail regularization (default: 100.0)
-- `resolution_samples` (int): Output wavelength bins (default: 1020)
-- `auto_tune` (bool): Enable grid search tuning (default: False)
-- `sigma_threshold` (float): Minimum SNR for quality filtering (default: 5.0)
-- `wavelet_family` (str): Wavelet basis function (default: 'sym6')
 
 ### Export Configuration Template
 
@@ -82,71 +54,106 @@ config_path = export_default_sed_config("output/")
 # Edit output/sed_config.yaml to customize parameters
 ```
 
+## Module Structure
+
+```
+sed/
+├── __init__.py          - Module exports and public API
+├── config.py            - SEDConfig dataclass with PyTorch DIP parameters
+├── data_loader.py       - CSV loading and quality filtering
+├── data_structures.py   - GlobalSpectralData container for sparse matrices
+├── matrices.py          - Frequency-normalized measurement matrix construction
+├── solver_torch.py      - PyTorch Deep Image Prior optimization
+├── regularization.py    - Continuous Wavelet Transform with Mexican Hat wavelets
+├── reconstruction.py    - Main SEDReconstructor orchestrator
+├── validation.py        - Quality assessment and residual analysis
+├── plots.py             - Diagnostic visualization
+└── README.md            - This file
+```
+
+## Configuration Parameters
+
+### Deep Image Prior Parameters
+
+- `dip_filters` (int): Number of filters in U-Net architecture (default: 32)
+- `dip_depth` (int): Depth of U-Net network (default: 3)
+- `dip_noise_std` (float): Standard deviation of input noise (default: 0.1)
+
+### Optimization Parameters
+
+- `epochs` (int): Number of optimization iterations (default: 3000)
+- `learning_rate` (float): Adam optimizer learning rate (default: 0.001)
+- `learning_rate_scheduler_type` (str): 'none', 'cosine', or 'cosine_warmup' (default: 'cosine_warmup')
+- `learning_rate_warmup_epochs` (int): Warmup epochs for cosine scheduler (default: 150)
+
+### Regularization Parameters
+
+- `regularization_weight` (float): CWT regularization strength (default: 1.0)
+- `cwt_scales` (list): Wavelet scales for multi-scale constraints (default: [1.0, 2.0, 3.0])
+
+### Reconstruction Parameters
+
+- `global_resolution` (int): Output wavelength bins across 0.75-5.0 μm (default: 3000)
+- `wavelength_range` (tuple): Reconstruction wavelength range in μm (default: (0.75, 5.0))
+- `device` (str): PyTorch device ('cpu', 'cuda', 'mps') (default: 'mps')
+
+### Quality Control
+
+- `sigma_threshold` (float): Minimum SNR for quality filtering (default: 3.0)
+- `bad_flags` (list): Pixel flags to reject (default: standard SPHEREx bad flags)
+- `enable_sigma_clip` (bool): MAD-based outlier removal (default: True)
+
 ## Outputs
 
 ### CSV File: `sed_reconstruction.csv`
 
 Columns:
 
-- `wavelength` (microns): Wavelength grid
+- `wavelength` (microns): Global wavelength grid (0.75-5.0 μm)
 - `flux` (microJansky): Reconstructed flux density
-- `band` (str): Source band (D1-D6)
+- `flux_error` (microJansky): Estimated reconstruction uncertainty
 
 ### YAML File: `sed_metadata.yaml`
 
 Contains:
 
 - Source information (name, RA, Dec)
-- Hyperparameters (lambda_vector per band)
-- Wavelet decomposition information
-- Quality metrics (chi-squared reduced)
+- Deep Image Prior configuration (network architecture, optimization parameters)
+- Quality metrics (chi-squared reduced, residuals statistics)
+- Dataset information (number of measurements per band, quality control statistics)
 
-### Diagnostic Plots (optional)
+### Diagnostic Plots
 
-- `sed_diagnostic_summary.png`: Multi-panel overview
-- `sed_band_comparison.png`: Individual band spectra
+- `sed_diagnostic_summary.png`: Multi-panel overview with residuals and quality metrics
+- `sed_reconstruction.png`: Reconstructed spectrum with confidence intervals
 
 ## Workflow
 
 1. **Data Loading**: Load lightcurve CSV from SPXQuery processing pipeline
 2. **Quality Filtering**: Apply SNR threshold and bad pixel flags
-3. **Band Separation**: Split data into 6 detector bands (D1-D6)
-4. **Matrix Construction**: Build measurement matrix H and SWT operators
-5. **Optimization**: Solve convex problem (manual or auto-tuned hyperparameters)
-6. **Validation**: Compute chi-squared, residuals, quality metrics
-7. **Output**: Save CSV, YAML, and diagnostic plots
-
-## Auto-Tuning
-
-When `auto_tune=True`:
-
-1. Split data into 80% training, 20% validation
-2. Grid search over 4D hyperparameter space (continuum × low_features × main_features × noise)
-3. Select hyperparameters minimizing validation error
-4. Reconstruct on full dataset with optimal parameters
-
-Default grids:
-
-- `lambda_continuum_grid`: [0.01, 0.1, 1.0]
-- `lambda_low_features_grid`: [0.1, 1.0, 10.0]
-- `lambda_main_features_grid`: [1.0, 10.0, 100.0]
-- `lambda_noise_grid`: [10.0, 100.0, 1000.0]
+3. **Band Aggregation**: Combine all detector bands into global dataset
+4. **Matrix Construction**: Build sparse measurement matrix H with frequency normalization
+5. **Deep Image Prior Optimization**: Train U-Net network with CWT regularization
+6. **Quality Assessment**: Compute chi-squared, residuals, and validation metrics
+7. **Output**: Save global spectrum CSV, metadata YAML, and diagnostic plots
 
 ## Quality Metrics
 
-### Chi-Squared
+### Reconstruction Quality
 
-- `chi_squared`: Sum of squared weighted residuals
-- `chi_squared_reduced`: Chi-squared / degrees of freedom
-- Ideal: chi_squared_reduced ≈ 1.0
-- > 2.0: Poor fit or underestimated errors
-- < 0.5: Overfitting or overestimated errors
+- `chi_squared_reduced`: Weighted residual sum of squares / degrees of freedom
+  - Ideal: ≈ 1.0
+  - > 2.0: Poor fit or underestimated errors
+  - < 0.5: Overfitting or overestimated errors
 
-### Residuals
+- `line_flux_recovery`: Fraction of known emission line flux recovered (>95% for S/N>10)
+- `continuum_deviation`: Maximum deviation from smooth continuum (<3%)
 
-- Raw residuals: y - H@x
-- Weighted residuals: w*(y - H@x)
-- Weighted residuals should be approximately N(0, 1) if model is correct
+### Convergence Metrics
+
+- Training loss progression and learning rate schedule
+- CWT regularization term magnitude
+- Data fidelity term convergence
 
 ## Integration with SPXQuery
 
@@ -164,33 +171,87 @@ This module is designed as a standalone tool but integrates with SPXQuery:
 
 ## Dependencies
 
-- numpy: Numerical arrays
-- scipy: Sparse matrices
-- pandas: CSV I/O
-- cvxpy: Convex optimization
-- matplotlib: Visualization
-- pyyaml: Configuration files
+- `torch`: Neural network optimization and automatic differentiation
+- `numpy`: Numerical arrays and operations
+- `scipy`: Sparse matrix construction and scientific computing
+- `pandas`: CSV I/O and data manipulation
+- `matplotlib`: Publication-quality visualization
+- `astropy`: Physical constants and astronomical calculations
+- `pyyaml`: Configuration file management
 
 ## Performance Notes
 
-- **Memory**: Sparse matrices keep memory usage reasonable (< 1 GB for typical sources)
-- **Speed**: Single band reconstruction ~5-60 seconds depending on solver
-- **Auto-tuning**: Grid search multiplies time by number of combinations (typically 16)
-- **Solver**: CLARABEL (default, improved ECOS) is fast and stable; SCS for large problems
+- **GPU Acceleration**: Automatic MPS/CUDA detection and fallback to CPU
+- **Memory**: Sparse matrices keep memory usage reasonable (< 2 GB for typical sources)
+- **Speed**: Global reconstruction ~10-30 seconds with GPU/MPS acceleration
+- **Scalability**: Configurable resolution and network architecture for different requirements
 
-## Future Extensions
+## Hardware Requirements
 
-Potential enhancements:
+### Recommended
+- **GPU**: NVIDIA CUDA (RTX 3060+), Apple Silicon (M1/M2/M3), or Intel integrated GPU
+- **RAM**: 8GB+ for typical datasets
+- **Storage**: Minimal (input CSV + output files)
 
-- Gaussian filter profiles (currently only boxcar)
-- Cross-validation with K-folds
-- Adaptive grid search
-- Parallel band processing
-- GPU acceleration for large datasets
+### Minimum
+- **CPU**: Multi-core processor (slower but functional)
+- **RAM**: 4GB for small datasets
+- **Storage**: Same as recommended
+
+## Usage Examples
+
+### Basic Reconstruction
+
+```python
+from spxquery.sed import SEDReconstructor, SEDConfig
+
+# Default configuration (3000 epochs, MPS device)
+config = SEDConfig()
+reconstructor = SEDReconstructor(config)
+result = reconstructor.reconstruct_from_csv("my_lightcurve.csv")
+
+# Access results
+wavelengths = result.wavelengths
+spectrum = result.spectrum
+quality = result.validation_metrics
+
+print(f"Chi-squared reduced: {quality.chi_squared_reduced:.3f}")
+print(f"Reconstruction quality: {quality.assess_quality()}")
+```
+
+### Advanced Configuration
+
+```python
+config = SEDConfig(
+    # Deep Image Prior architecture
+    dip_filters=64,
+    dip_depth=4,
+
+    # Optimization parameters
+    epochs=5000,
+    learning_rate=0.0005,
+    learning_rate_scheduler_type='cosine_warmup',
+
+    # Regularization
+    regularization_weight=2.0,
+    cwt_scales=[0.5, 1.0, 2.0, 4.0],
+
+    # Quality control
+    sigma_threshold=5.0,
+    enable_sigma_clip=True,
+
+    # Device selection
+    device='cuda'  # Force CUDA GPU
+)
+
+reconstructor = SEDReconstructor(config)
+result = reconstructor.reconstruct_from_csv("lightcurve.csv")
+result.save_all("high_quality_output/")
+```
 
 ## References
 
-See `SpecRefine.md` for detailed mathematical derivation and implementation plan.
+See `SpecRefine.md` for detailed mathematical derivation and implementation details.
 
 ## Support
 
