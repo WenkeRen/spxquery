@@ -212,7 +212,6 @@ class SpectralUNet(nn.Module):
         self.upsamples = nn.ModuleList()
 
         for i in range(depth):
-            prev_filters = curr_filters
             curr_filters = curr_filters // 2
 
             # Upsample
@@ -338,11 +337,9 @@ class SpectralModel(nn.Module):
                 decay_progress = min(decay_progress, 1.0)  # Clamp to [0, 1]
 
                 # Linear interpolation from initial to minimum jitter
-                current_ratio = (
-                    self.config.dip_noise_jitter_min_ratio +
-                    (self.config.dip_noise_jitter_initial_ratio - self.config.dip_noise_jitter_min_ratio) *
-                    (1 - decay_progress)
-                )
+                current_ratio = self.config.dip_noise_jitter_min_ratio + (
+                    self.config.dip_noise_jitter_initial_ratio - self.config.dip_noise_jitter_min_ratio
+                ) * (1 - decay_progress)
                 current_jitter_std = self.config.dip_noise_std * current_ratio
 
             self.current_jitter_std = torch.tensor(current_jitter_std)
@@ -384,6 +381,110 @@ class SpectralModel(nn.Module):
             Spectrum generated with fixed noise only, shape (N,).
         """
         return self.net(self.z_static).squeeze()
+
+
+class EMATracker:
+    """
+    Exponential Moving Average (EMA) tracker for spectrum smoothing.
+
+    This class maintains an EMA of generated spectra during training to provide
+    smoother, more stable outputs. The EMA reduces noise and variance in the
+    final spectrum while preserving the essential features.
+
+    The EMA formula is:
+    new_average = decay * old_average + (1 - decay) * new_value
+    """
+
+    def __init__(self, decay: float = 0.99):
+        """
+        Initialize EMA tracker.
+
+        Parameters
+        ----------
+        decay : float
+            Decay rate for EMA. 0.99 means high trust in history (smoother results),
+            while 0.95 would respond faster to recent changes (less smoothing).
+            Must be between 0.9 and 0.999 for stable EMA behavior.
+        """
+        if not (0.9 <= decay <= 0.999):
+            raise ValueError(f"EMA decay must be between 0.9 and 0.999 for stable behavior, got {decay}")
+
+        self.decay = decay
+        self.shadow = None  # EMA-averaged spectrum
+        self.is_initialized = False
+
+    def update(self, current_spectrum: torch.Tensor):
+        """
+        Update EMA with current spectrum.
+
+        Parameters
+        ----------
+        current_spectrum : torch.Tensor
+            Current spectrum tensor from model output, shape (N,).
+        """
+        # Ensure input is detached from computation graph
+        current_spectrum = current_spectrum.detach()
+
+        if not self.is_initialized:
+            # First update: EMA equals current spectrum
+            self.shadow = current_spectrum.clone()
+            self.is_initialized = True
+        else:
+            # EMA update: new_average = decay * old_average + (1 - decay) * new_value
+            self.shadow = self.decay * self.shadow + (1 - self.decay) * current_spectrum
+
+    def get_ema_spectrum(self):
+        """
+        Get EMA-smoothed spectrum.
+
+        Returns
+        -------
+        torch.Tensor or None
+            EMA-averaged spectrum, shape (N,), or None if not yet initialized.
+        """
+        return self.shadow.clone() if self.is_initialized else None
+
+    def get_l1_change(self, current_spectrum: torch.Tensor) -> float:
+        """
+        Calculate L1 distance between current spectrum and EMA spectrum.
+
+        Parameters
+        ----------
+        current_spectrum : torch.Tensor
+            Current spectrum tensor, shape (N,).
+
+        Returns
+        -------
+        float
+            L1 distance (sum of absolute differences).
+        """
+        if not self.is_initialized:
+            return 0.0
+
+        with torch.no_grad():
+            l1_change = torch.sum(torch.abs(current_spectrum - self.shadow)).item()
+        return l1_change
+
+    def get_l2_change(self, current_spectrum: torch.Tensor) -> float:
+        """
+        Calculate L2 distance between current spectrum and EMA spectrum.
+
+        Parameters
+        ----------
+        current_spectrum : torch.Tensor
+            Current spectrum tensor, shape (N,).
+
+        Returns
+        -------
+        float
+            L2 distance (sqrt of sum of squared differences).
+        """
+        if not self.is_initialized:
+            return 0.0
+
+        with torch.no_grad():
+            l2_change = torch.norm(current_spectrum - self.shadow).item()
+        return l2_change
 
 
 def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
@@ -468,19 +569,33 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     previous_spectrum = None
     spectrum_changes = []
 
+    # Initialize EMA tracker if enabled
+    ema_tracker = None
+    ema_start_epoch = (
+        config.ema_start_epoch if config.ema_start_epoch is not None else config.learning_rate_warmup_epochs
+    )
+    if config.use_ema:
+        ema_tracker = EMATracker(decay=config.ema_decay)
+        logger.info(f"EMA enabled with decay={config.ema_decay}, start_epoch={ema_start_epoch}")
+    else:
+        logger.info("EMA disabled")
+
     # Initialize wandb logging if enabled
     if config.is_wandb_enabled():
         try:
             # Log initial configuration
             config.log_to_wandb(config.to_wandb_config())
-            config.log_to_wandb({
-                "training_started": True,
-                "total_epochs": config.epochs,
-                "learning_rate": config.learning_rate,
-                "regularization_weight": config.regularization_weight,
-            })
+            config.log_to_wandb(
+                {
+                    "training_started": True,
+                    "total_epochs": config.epochs,
+                    "learning_rate": config.learning_rate,
+                    "regularization_weight": config.regularization_weight,
+                }
+            )
         except Exception as e:
             import warnings
+
             warnings.warn(f"Failed to initialize wandb logging: {e}", RuntimeWarning)
 
     pbar = tqdm(range(config.epochs), desc="Optimizing Spectrum")
@@ -529,6 +644,12 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
         optimizer.step()
 
+        # EMA update (after optimizer step, using the fixed noise spectrum)
+        if ema_tracker is not None and epoch >= ema_start_epoch:
+            # Use fixed noise spectrum for EMA to get consistent tracking
+            fixed_spectrum = model.forward_fixed_noise()
+            ema_tracker.update(fixed_spectrum)
+
         # Learning rate scheduler step
         if scheduler is not None:
             scheduler.step()
@@ -544,19 +665,21 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
             # L1 and L2 differences
             l1_diff = np.mean(np.abs(spectrum_cpu - prev_spectrum_cpu))
-            l2_diff = np.sqrt(np.mean((spectrum_cpu - prev_spectrum_cpu)**2))
+            l2_diff = np.sqrt(np.mean((spectrum_cpu - prev_spectrum_cpu) ** 2))
 
             # Relative change (normalized by current spectrum magnitude)
             current_magnitude = np.mean(np.abs(spectrum_cpu))
             relative_change = l1_diff / (current_magnitude + 1e-10)
 
-            spectrum_changes.append({
-                'epoch': epoch,
-                'l1_difference': l1_diff,
-                'l2_difference': l2_diff,
-                'relative_change': relative_change,
-                'current_magnitude': current_magnitude
-            })
+            spectrum_changes.append(
+                {
+                    "epoch": epoch,
+                    "l1_difference": l1_diff,
+                    "l2_difference": l2_diff,
+                    "relative_change": relative_change,
+                    "current_magnitude": current_magnitude,
+                }
+            )
 
         # Update previous spectrum
         previous_spectrum = spectrum.detach().clone()
@@ -568,41 +691,66 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
             # Prepare metrics for logging
             metrics = {
-                'epoch': epoch,
-                'total_loss': current_loss,
-                'data_loss': loss_data.item(),
-                'regularization_loss': loss_reg.item(),
-                'learning_rate': current_lr,
+                "epoch": epoch,
+                "total_loss": current_loss,
+                "data_loss": loss_data.item(),
+                "regularization_loss": loss_reg.item(),
+                "learning_rate": current_lr,
             }
 
             # Add convergence metrics if available
             if config.wandb_track_convergence and spectrum_changes:
                 latest_change = spectrum_changes[-1]
-                metrics.update({
-                    'spectrum_l1_change': latest_change['l1_difference'],
-                    'spectrum_l2_change': latest_change['l2_difference'],
-                    'spectrum_relative_change': latest_change['relative_change'],
-                    'spectrum_magnitude': latest_change['current_magnitude'],
-                })
+                metrics.update(
+                    {
+                        "spectrum_l1_change": latest_change["l1_difference"],
+                        "spectrum_l2_change": latest_change["l2_difference"],
+                        "spectrum_relative_change": latest_change["relative_change"],
+                        "spectrum_magnitude": latest_change["current_magnitude"],
+                    }
+                )
 
             # Add jitter information
-            if hasattr(model, 'current_jitter_std'):
-                metrics['jitter_std'] = model.current_jitter_std.item()
+            if hasattr(model, "current_jitter_std"):
+                metrics["jitter_std"] = model.current_jitter_std.item()
+
+            # Add EMA metrics if enabled and active
+            if ema_tracker is not None and epoch >= ema_start_epoch and ema_tracker.is_initialized:
+                fixed_spectrum = model.forward_fixed_noise()
+                ema_l1_change = ema_tracker.get_l1_change(fixed_spectrum)
+                ema_l2_change = ema_tracker.get_l2_change(fixed_spectrum)
+                metrics.update(
+                    {
+                        "ema_l1_change": ema_l1_change,
+                        "ema_l2_change": ema_l2_change,
+                        "ema_active": True,
+                        "ema_epoch": epoch - ema_start_epoch + 1,  # How many epochs of EMA tracking
+                    }
+                )
+
+                # Log EMA spectrum evolution periodically
+                if config.wandb_log_spectrum_evolution and epoch % config.wandb_spectrum_evolution_frequency == 0:
+                    ema_spectrum = ema_tracker.get_ema_spectrum()
+                    if ema_spectrum is not None:
+                        ema_spectrum_cpu = ema_spectrum.detach().cpu().numpy()
+                        wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
+                        config.log_spectrum_to_wandb(
+                            ema_spectrum_cpu, wavelength_cpu, epoch, title=f"EMA_Spectrum_Epoch_{epoch}"
+                        )
+            elif ema_tracker is not None:
+                # EMA enabled but not yet active
+                metrics["ema_active"] = False
 
             # Log to wandb
             config.log_to_wandb(metrics, step=epoch)
 
             # Log spectrum evolution if enabled
-            if (config.wandb_log_spectrum_evolution and
-                epoch % config.wandb_spectrum_evolution_frequency == 0):
+            if config.wandb_log_spectrum_evolution and epoch % config.wandb_spectrum_evolution_frequency == 0:
                 # Use fixed noise only for consistent spectrum logging
                 fixed_spectrum = model.forward_fixed_noise()
                 spectrum_cpu = fixed_spectrum.detach().cpu().numpy()
                 wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
-                config.log_spectrum_to_wandb(
-                    spectrum_cpu, wavelength_cpu, epoch,
-                    title=f"Spectrum_Epoch_{epoch}"
-                )
+                config.log_spectrum_to_wandb(spectrum_cpu, wavelength_cpu, epoch, title=f"Spectrum_Epoch_{epoch}")
 
         # Progress bar logging (existing functionality)
         if epoch % 100 == 0:
@@ -619,15 +767,27 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     end_time = time.time()
     solver_time = end_time - start_time
 
-    # Get final spectrum from the last epoch using fixed noise only
-    final_spectrum = model.forward_fixed_noise().detach()
+    # Get final spectrum, preferring EMA if available and active
+    if ema_tracker is not None and ema_tracker.is_initialized:
+        ema_spectrum = ema_tracker.get_ema_spectrum()
+        if ema_spectrum is not None:
+            final_spectrum = ema_spectrum
+            logger.info("Using EMA-smoothed spectrum as final result")
+        else:
+            final_spectrum = model.forward_fixed_noise().detach()
+            logger.warning("EMA tracker initialized but no EMA spectrum available, using fixed noise spectrum")
+    else:
+        final_spectrum = model.forward_fixed_noise().detach()
+        if ema_tracker is not None:
+            logger.info(
+                f"EMA tracker did not initialize (completed epochs: {config.epochs}, start_epoch: {ema_start_epoch})"
+            )
 
     # Create status message
     solver_status = "success"
 
     logger.info(
-        f"Optimization complete. Status: {solver_status}, Time: {solver_time:.2f}s, "
-        f"Final Loss: {current_loss:.4e}"
+        f"Optimization complete. Status: {solver_status}, Time: {solver_time:.2f}s, Final Loss: {current_loss:.4e}"
     )
 
     # Final wandb logging and convergence analysis
@@ -635,43 +795,65 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
         try:
             # Log final results
             final_metrics = {
-                'training_completed': True,
-                'final_status': solver_status,
-                'total_time_seconds': solver_time,
-                'final_loss': current_loss,
-                'total_epochs_completed': config.epochs,
-                'epochs_per_second': config.epochs / solver_time,
+                "training_completed": True,
+                "final_status": solver_status,
+                "total_time_seconds": solver_time,
+                "final_loss": current_loss,
+                "total_epochs_completed": config.epochs,
+                "epochs_per_second": config.epochs / solver_time,
             }
+
+            # Add EMA final information
+            if ema_tracker is not None:
+                final_metrics.update(
+                    {
+                        "ema_enabled": True,
+                        "ema_start_epoch": ema_start_epoch,
+                        "ema_was_initialized": ema_tracker.is_initialized,
+                        "ema_final_used": ema_tracker.is_initialized and ema_tracker.get_ema_spectrum() is not None,
+                        "ema_decay": config.ema_decay,
+                    }
+                )
+
+                if ema_tracker.is_initialized:
+                    final_metrics["ema_activated_at_epoch"] = ema_start_epoch
+                    final_metrics["ema_tracking_epochs"] = config.epochs - ema_start_epoch
+            else:
+                final_metrics["ema_enabled"] = False
 
             # Add convergence analysis if tracking was enabled
             if config.wandb_track_convergence and spectrum_changes:
                 # Compute convergence statistics
-                l1_changes = [change['l1_difference'] for change in spectrum_changes]
-                l2_changes = [change['l2_difference'] for change in spectrum_changes]
-                relative_changes = [change['relative_change'] for change in spectrum_changes]
+                l1_changes = [change["l1_difference"] for change in spectrum_changes]
+                l2_changes = [change["l2_difference"] for change in spectrum_changes]
+                relative_changes = [change["relative_change"] for change in spectrum_changes]
 
-                final_metrics.update({
-                    'convergence_mean_l1_change': np.mean(l1_changes),
-                    'convergence_std_l1_change': np.std(l1_changes),
-                    'convergence_final_l1_change': l1_changes[-1],
-                    'convergence_mean_l2_change': np.mean(l2_changes),
-                    'convergence_std_l2_change': np.std(l2_changes),
-                    'convergence_final_l2_change': l2_changes[-1],
-                    'convergence_mean_relative_change': np.mean(relative_changes),
-                    'convergence_std_relative_change': np.std(relative_changes),
-                    'convergence_final_relative_change': relative_changes[-1],
-                })
+                final_metrics.update(
+                    {
+                        "convergence_mean_l1_change": np.mean(l1_changes),
+                        "convergence_std_l1_change": np.std(l1_changes),
+                        "convergence_final_l1_change": l1_changes[-1],
+                        "convergence_mean_l2_change": np.mean(l2_changes),
+                        "convergence_std_l2_change": np.std(l2_changes),
+                        "convergence_final_l2_change": l2_changes[-1],
+                        "convergence_mean_relative_change": np.mean(relative_changes),
+                        "convergence_std_relative_change": np.std(relative_changes),
+                        "convergence_final_relative_change": relative_changes[-1],
+                    }
+                )
 
                 # Stopping criteria assessment
-                recent_changes = relative_changes[-min(10, len(relative_changes)):]  # Last 10 changes
+                recent_changes = relative_changes[-min(10, len(relative_changes)) :]  # Last 10 changes
                 recent_stability = np.std(recent_changes)
                 recent_mean = np.mean(recent_changes)
 
-                final_metrics.update({
-                    'stopping_recent_stability': recent_stability,
-                    'stopping_recent_mean_change': recent_mean,
-                    'stopping_recommendation': 'stable' if recent_stability < 1e-4 else 'unstable',
-                })
+                final_metrics.update(
+                    {
+                        "stopping_recent_stability": recent_stability,
+                        "stopping_recent_mean_change": recent_mean,
+                        "stopping_recommendation": "stable" if recent_stability < 1e-4 else "unstable",
+                    }
+                )
 
             config.log_to_wandb(final_metrics)
 
@@ -681,20 +863,26 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
                 final_fixed_spectrum = model.forward_fixed_noise()
                 final_spectrum_cpu = final_fixed_spectrum.detach().cpu().numpy()
                 wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
-                config.log_spectrum_to_wandb(
-                    final_spectrum_cpu, wavelength_cpu, config.epochs,
-                    title="Final_Spectrum"
-                )
+                config.log_spectrum_to_wandb(final_spectrum_cpu, wavelength_cpu, config.epochs, title="Final_Spectrum")
 
                 # Also log the final epoch spectrum for comparison
                 final_spectrum_cpu = final_spectrum.cpu().numpy()
                 config.log_spectrum_to_wandb(
-                    final_spectrum_cpu, wavelength_cpu, config.epochs,
-                    title="Final_Epoch_Spectrum"
+                    final_spectrum_cpu, wavelength_cpu, config.epochs, title="Final_Epoch_Spectrum"
                 )
+
+                # Log EMA spectrum if available and different from final spectrum
+                if ema_tracker is not None and ema_tracker.is_initialized:
+                    ema_final_spectrum = ema_tracker.get_ema_spectrum()
+                    if ema_final_spectrum is not None:
+                        ema_spectrum_cpu = ema_final_spectrum.detach().cpu().numpy()
+                        config.log_spectrum_to_wandb(
+                            ema_spectrum_cpu, wavelength_cpu, config.epochs, title="Final_EMA_Spectrum"
+                        )
 
         except Exception as e:
             import warnings
+
             warnings.warn(f"Failed to log final results to wandb: {e}", RuntimeWarning)
 
     return final_spectrum.cpu(), solver_status, solver_time

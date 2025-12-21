@@ -105,6 +105,18 @@ class SEDConfig:
         How often to log spectrum snapshots (in epochs). Default: 500.
     wandb_track_convergence : bool
         Whether to track convergence metrics for stopping decisions. Default: True.
+    use_ema : bool
+        Enable/disable Exponential Moving Average for spectrum quality control. Default: True.
+        EMA provides smoother, more stable spectrum outputs by maintaining a running average
+        of the generated spectra during training.
+    ema_decay : float
+        Decay rate for Exponential Moving Average. Default: 0.99 (99%).
+        Higher values (0.99+) trust history more for smoother results.
+        Lower values (0.95-0.98) respond faster to recent changes.
+    ema_start_epoch : Optional[int]
+        Epoch to start EMA tracking. Default: None (uses learning_rate_warmup_epochs).
+        If provided, EMA tracking begins after this many epochs.
+        If None, automatically uses the same value as learning_rate_warmup_epochs.
 
     Attributes
     ----------
@@ -144,7 +156,9 @@ class SEDConfig:
     dip_depth: int = 3
 
     # Noise jittering parameters
-    dip_noise_jitter_initial_ratio: Optional[float] = 0.3  # Initial jitter as ratio of dip_noise_std, None means no jitter
+    dip_noise_jitter_initial_ratio: Optional[float] = (
+        0.3  # Initial jitter as ratio of dip_noise_std, None means no jitter
+    )
     dip_noise_jitter_min_ratio: Optional[float] = None  # Minimum jitter ratio, None means no decay
 
     # Regularization (CWT)
@@ -174,6 +188,11 @@ class SEDConfig:
     wandb_spectrum_evolution_frequency: int = 500  # How often to log spectrum snapshots (in epochs)
     wandb_track_convergence: bool = True  # Whether to track convergence metrics for stopping decisions
 
+    # EMA (Exponential Moving Average) parameters for spectrum quality control
+    use_ema: bool = True  # Enable/disable Exponential Moving Average (default: True)
+    ema_decay: float = 0.99  # EMA decay rate (default: 99%, trusting history more)
+    ema_start_epoch: Optional[int] = None  # EMA startup epoch (None = use learning_rate_warmup_epochs)
+
     def __post_init__(self):
         """Validate configuration parameters after initialization."""
         # Validate global reconstruction parameters
@@ -202,13 +221,21 @@ class SEDConfig:
         # Validate learning rate scheduling parameters
         valid_schedulers = ["none", "cosine", "cosine_warmup", "warmup"]
         if self.learning_rate_scheduler_type not in valid_schedulers:
-            raise ValueError(f"learning_rate_scheduler_type must be one of {valid_schedulers}, got '{self.learning_rate_scheduler_type}'")
+            raise ValueError(
+                f"learning_rate_scheduler_type must be one of {valid_schedulers}, got '{self.learning_rate_scheduler_type}'"
+            )
         if self.learning_rate_warmup_epochs < 0:
-            raise ValueError(f"learning_rate_warmup_epochs must be non-negative, got {self.learning_rate_warmup_epochs}")
+            raise ValueError(
+                f"learning_rate_warmup_epochs must be non-negative, got {self.learning_rate_warmup_epochs}"
+            )
         if self.learning_rate_warmup_epochs >= self.epochs:
-            raise ValueError(f"learning_rate_warmup_epochs ({self.learning_rate_warmup_epochs}) must be less than epochs ({self.epochs})")
+            raise ValueError(
+                f"learning_rate_warmup_epochs ({self.learning_rate_warmup_epochs}) must be less than epochs ({self.epochs})"
+            )
         if self.learning_rate_min_factor <= 0 or self.learning_rate_min_factor >= 1:
-            raise ValueError(f"learning_rate_min_factor must be between 0 and 1 (exclusive), got {self.learning_rate_min_factor}")
+            raise ValueError(
+                f"learning_rate_min_factor must be between 0 and 1 (exclusive), got {self.learning_rate_min_factor}"
+            )
 
         # Validate Deep Prior Architecture
         if self.dip_noise_std < 0:
@@ -222,15 +249,13 @@ class SEDConfig:
         if self.dip_noise_jitter_initial_ratio is not None:
             if self.dip_noise_jitter_initial_ratio < 0:
                 raise ValueError(
-                    f"dip_noise_jitter_initial_ratio must be non-negative, "
-                    f"got {self.dip_noise_jitter_initial_ratio}"
+                    f"dip_noise_jitter_initial_ratio must be non-negative, got {self.dip_noise_jitter_initial_ratio}"
                 )
 
         if self.dip_noise_jitter_min_ratio is not None:
             if self.dip_noise_jitter_min_ratio < 0:
                 raise ValueError(
-                    f"dip_noise_jitter_min_ratio must be non-negative, "
-                    f"got {self.dip_noise_jitter_min_ratio}"
+                    f"dip_noise_jitter_min_ratio must be non-negative, got {self.dip_noise_jitter_min_ratio}"
                 )
             if self.dip_noise_jitter_initial_ratio is not None:
                 if self.dip_noise_jitter_min_ratio > self.dip_noise_jitter_initial_ratio:
@@ -277,7 +302,21 @@ class SEDConfig:
         if self.wandb_log_frequency <= 0:
             raise ValueError(f"wandb_log_frequency must be positive, got {self.wandb_log_frequency}")
         if self.wandb_spectrum_evolution_frequency <= 0:
-            raise ValueError(f"wandb_spectrum_evolution_frequency must be positive, got {self.wandb_spectrum_evolution_frequency}")
+            raise ValueError(
+                f"wandb_spectrum_evolution_frequency must be positive, got {self.wandb_spectrum_evolution_frequency}"
+            )
+
+        # Validate EMA parameters
+        if self.use_ema:
+            if not (0.9 <= self.ema_decay <= 0.999):
+                raise ValueError(f"ema_decay must be between 0.9 and 0.999 for stable EMA, got {self.ema_decay}")
+            if self.ema_start_epoch is not None:
+                if self.ema_start_epoch < 0:
+                    raise ValueError(f"ema_start_epoch must be non-negative, got {self.ema_start_epoch}")
+                if self.ema_start_epoch >= self.epochs:
+                    raise ValueError(
+                        f"ema_start_epoch ({self.ema_start_epoch}) must be less than epochs ({self.epochs})"
+                    )
 
     def is_wandb_enabled(self) -> bool:
         """
@@ -307,10 +346,10 @@ class SEDConfig:
             except Exception as e:
                 # Fail silently if wandb logging fails
                 import warnings
+
                 warnings.warn(f"Failed to log to wandb: {e}", RuntimeWarning)
 
-    def log_spectrum_to_wandb(self, spectrum_data, wavelength_data, step: int,
-                            title: str = "Spectrum") -> None:
+    def log_spectrum_to_wandb(self, spectrum_data, wavelength_data, step: int, title: str = "Spectrum") -> None:
         """
         Log spectrum plot to wandb if wandb is enabled.
 
@@ -331,14 +370,15 @@ class SEDConfig:
 
                 # Create a temporary figure
                 fig, ax = plt.subplots(figsize=(10, 6))
-                ax.plot(wavelength_data, spectrum_data, 'b-', linewidth=1.5)
-                ax.set_xlabel('Wavelength (μm)')
-                ax.set_ylabel('Flux')
-                ax.set_title(f'{title} - Step {step}')
+                ax.plot(wavelength_data, spectrum_data, "b-", linewidth=1.5)
+                ax.set_xlabel("Wavelength (μm)")
+                ax.set_ylabel("Flux")
+                ax.set_title(f"{title} - Step {step}")
                 ax.grid(True, alpha=0.3)
 
                 # Import wandb Image
                 from wandb import Image
+
                 # Log to wandb
                 self.wandb_run.log({title.lower(): Image(fig)}, step=step)
 
@@ -347,6 +387,7 @@ class SEDConfig:
             except Exception as e:
                 # Fail silently if wandb logging fails
                 import warnings
+
                 warnings.warn(f"Failed to log spectrum to wandb: {e}", RuntimeWarning)
 
     def to_wandb_config(self) -> Dict[str, Any]:
@@ -360,38 +401,41 @@ class SEDConfig:
         """
         # Manually build config dict to avoid serialization issues with wandb module
         config_dict = {
-            'wavelength_range': self.wavelength_range,
-            'global_resolution': self.global_resolution,
-            'device': self.device,
-            'optimizer': self.optimizer,
-            'learning_rate': self.learning_rate,
-            'epochs': self.epochs,
-            'learning_rate_scheduler_type': self.learning_rate_scheduler_type,
-            'learning_rate_warmup_epochs': self.learning_rate_warmup_epochs,
-            'learning_rate_min_factor': self.learning_rate_min_factor,
-            'dip_noise_std': self.dip_noise_std,
-            'dip_filters': self.dip_filters,
-            'dip_depth': self.dip_depth,
-            'dip_noise_jitter_initial_ratio': self.dip_noise_jitter_initial_ratio,
-            'dip_noise_jitter_min_ratio': self.dip_noise_jitter_min_ratio,
-            'regularization_weight': self.regularization_weight,
-            'cwt_scales': self.cwt_scales,
-            'sigma_threshold': self.sigma_threshold,
-            'bad_flags': self.bad_flags,
-            'enable_sigma_clip': self.enable_sigma_clip,
-            'sigma_clip_sigma': self.sigma_clip_sigma,
-            'sigma_clip_window': self.sigma_clip_window,
-            'sigma_clip_max_iterations': self.sigma_clip_max_iterations,
-            'filter_profile': self.filter_profile,
-            'epsilon_weight': self.epsilon_weight,
-            'wandb_log_frequency': self.wandb_log_frequency,
-            'wandb_log_spectrum_evolution': self.wandb_log_spectrum_evolution,
-            'wandb_spectrum_evolution_frequency': self.wandb_spectrum_evolution_frequency,
-            'wandb_track_convergence': self.wandb_track_convergence,
+            "wavelength_range": self.wavelength_range,
+            "global_resolution": self.global_resolution,
+            "device": self.device,
+            "optimizer": self.optimizer,
+            "learning_rate": self.learning_rate,
+            "epochs": self.epochs,
+            "learning_rate_scheduler_type": self.learning_rate_scheduler_type,
+            "learning_rate_warmup_epochs": self.learning_rate_warmup_epochs,
+            "learning_rate_min_factor": self.learning_rate_min_factor,
+            "dip_noise_std": self.dip_noise_std,
+            "dip_filters": self.dip_filters,
+            "dip_depth": self.dip_depth,
+            "dip_noise_jitter_initial_ratio": self.dip_noise_jitter_initial_ratio,
+            "dip_noise_jitter_min_ratio": self.dip_noise_jitter_min_ratio,
+            "regularization_weight": self.regularization_weight,
+            "cwt_scales": self.cwt_scales,
+            "sigma_threshold": self.sigma_threshold,
+            "bad_flags": self.bad_flags,
+            "enable_sigma_clip": self.enable_sigma_clip,
+            "sigma_clip_sigma": self.sigma_clip_sigma,
+            "sigma_clip_window": self.sigma_clip_window,
+            "sigma_clip_max_iterations": self.sigma_clip_max_iterations,
+            "filter_profile": self.filter_profile,
+            "epsilon_weight": self.epsilon_weight,
+            "wandb_log_frequency": self.wandb_log_frequency,
+            "wandb_log_spectrum_evolution": self.wandb_log_spectrum_evolution,
+            "wandb_spectrum_evolution_frequency": self.wandb_spectrum_evolution_frequency,
+            "wandb_track_convergence": self.wandb_track_convergence,
+            "use_ema": self.use_ema,
+            "ema_decay": self.ema_decay,
+            "ema_start_epoch": self.ema_start_epoch,
         }
 
         # Handle wandb_run separately
-        config_dict['wandb_run_active'] = self.wandb_run is not None
+        config_dict["wandb_run_active"] = self.wandb_run is not None
 
         return config_dict
 
