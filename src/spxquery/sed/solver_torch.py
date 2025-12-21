@@ -6,6 +6,7 @@ import logging
 import math
 import time
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -398,6 +399,25 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     best_loss = float("inf")
     best_spectrum = None
 
+    # Model evolution tracking for convergence analysis
+    previous_spectrum = None
+    spectrum_changes = []
+
+    # Initialize wandb logging if enabled
+    if config.is_wandb_enabled():
+        try:
+            # Log initial configuration
+            config.log_to_wandb(config.to_wandb_config())
+            config.log_to_wandb({
+                "training_started": True,
+                "total_epochs": config.epochs,
+                "learning_rate": config.learning_rate,
+                "regularization_weight": config.regularization_weight,
+            })
+        except Exception as e:
+            import warnings
+            warnings.warn(f"Failed to initialize wandb logging: {e}", RuntimeWarning)
+
     pbar = tqdm(range(config.epochs), desc="Optimizing Spectrum")
 
     for epoch in pbar:
@@ -448,14 +468,81 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
         if scheduler is not None:
             scheduler.step()
 
-        # Logging
+        # Logging and model evolution tracking
         current_loss = loss.item()
         if current_loss < best_loss:
             best_loss = current_loss
             best_spectrum = spectrum.detach().clone()
 
-        if epoch % 100 == 0:
+        # Track model evolution for convergence analysis
+        if config.wandb_track_convergence and previous_spectrum is not None:
+            # Calculate spectrum change metrics
+            spectrum_cpu = spectrum.detach().cpu().numpy()
+            prev_spectrum_cpu = previous_spectrum.cpu().numpy()
+
+            # L1 and L2 differences
+            l1_diff = np.mean(np.abs(spectrum_cpu - prev_spectrum_cpu))
+            l2_diff = np.sqrt(np.mean((spectrum_cpu - prev_spectrum_cpu)**2))
+
+            # Relative change (normalized by current spectrum magnitude)
+            current_magnitude = np.mean(np.abs(spectrum_cpu))
+            relative_change = l1_diff / (current_magnitude + 1e-10)
+
+            spectrum_changes.append({
+                'epoch': epoch,
+                'l1_difference': l1_diff,
+                'l2_difference': l2_diff,
+                'relative_change': relative_change,
+                'current_magnitude': current_magnitude
+            })
+
+        # Update previous spectrum
+        previous_spectrum = spectrum.detach().clone()
+
+        # Wandb logging
+        if epoch % config.wandb_log_frequency == 0:
             # Get current learning rate for logging
+            current_lr = optimizer.param_groups[0]["lr"]
+
+            # Prepare metrics for logging
+            metrics = {
+                'epoch': epoch,
+                'total_loss': current_loss,
+                'data_loss': loss_data.item(),
+                'regularization_loss': loss_reg.item(),
+                'learning_rate': current_lr,
+                'best_loss_so_far': best_loss,
+            }
+
+            # Add convergence metrics if available
+            if config.wandb_track_convergence and spectrum_changes:
+                latest_change = spectrum_changes[-1]
+                metrics.update({
+                    'spectrum_l1_change': latest_change['l1_difference'],
+                    'spectrum_l2_change': latest_change['l2_difference'],
+                    'spectrum_relative_change': latest_change['relative_change'],
+                    'spectrum_magnitude': latest_change['current_magnitude'],
+                })
+
+            # Add jitter information
+            if hasattr(model, 'current_jitter_std'):
+                metrics['jitter_std'] = model.current_jitter_std.item()
+
+            # Log to wandb
+            config.log_to_wandb(metrics, step=epoch)
+
+            # Log spectrum evolution if enabled
+            if (config.wandb_log_spectrum_evolution and
+                epoch % config.wandb_spectrum_evolution_frequency == 0):
+                spectrum_cpu = spectrum.detach().cpu().numpy()
+                wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
+                config.log_spectrum_to_wandb(
+                    spectrum_cpu, wavelength_cpu, epoch,
+                    title=f"Spectrum_Epoch_{epoch}"
+                )
+
+        # Progress bar logging (existing functionality)
+        if epoch % 100 == 0:
             current_lr = optimizer.param_groups[0]["lr"]
             log_dict = {
                 "Loss": f"{current_loss:.4e}",
@@ -477,5 +564,63 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
         best_spectrum = torch.zeros(config.global_resolution)
 
     logger.info(f"Optimization complete. Status: {solver_status}, Time: {solver_time:.2f}s, Best Loss: {best_loss:.4e}")
+
+    # Final wandb logging and convergence analysis
+    if config.is_wandb_enabled():
+        try:
+            # Log final results
+            final_metrics = {
+                'training_completed': True,
+                'final_status': solver_status,
+                'total_time_seconds': solver_time,
+                'final_best_loss': best_loss,
+                'total_epochs_completed': config.epochs,
+                'epochs_per_second': config.epochs / solver_time,
+            }
+
+            # Add convergence analysis if tracking was enabled
+            if config.wandb_track_convergence and spectrum_changes:
+                # Compute convergence statistics
+                l1_changes = [change['l1_difference'] for change in spectrum_changes]
+                l2_changes = [change['l2_difference'] for change in spectrum_changes]
+                relative_changes = [change['relative_change'] for change in spectrum_changes]
+
+                final_metrics.update({
+                    'convergence_mean_l1_change': np.mean(l1_changes),
+                    'convergence_std_l1_change': np.std(l1_changes),
+                    'convergence_final_l1_change': l1_changes[-1],
+                    'convergence_mean_l2_change': np.mean(l2_changes),
+                    'convergence_std_l2_change': np.std(l2_changes),
+                    'convergence_final_l2_change': l2_changes[-1],
+                    'convergence_mean_relative_change': np.mean(relative_changes),
+                    'convergence_std_relative_change': np.std(relative_changes),
+                    'convergence_final_relative_change': relative_changes[-1],
+                })
+
+                # Stopping criteria assessment
+                recent_changes = relative_changes[-min(10, len(relative_changes)):]  # Last 10 changes
+                recent_stability = np.std(recent_changes)
+                recent_mean = np.mean(recent_changes)
+
+                final_metrics.update({
+                    'stopping_recent_stability': recent_stability,
+                    'stopping_recent_mean_change': recent_mean,
+                    'stopping_recommendation': 'stable' if recent_stability < 1e-4 else 'unstable',
+                })
+
+            config.log_to_wandb(final_metrics)
+
+            # Log final spectrum
+            if config.wandb_log_spectrum_evolution:
+                best_spectrum_cpu = best_spectrum.detach().cpu().numpy()
+                wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
+                config.log_spectrum_to_wandb(
+                    best_spectrum_cpu, wavelength_cpu, config.epochs,
+                    title="Final_Spectrum"
+                )
+
+        except Exception as e:
+            import warnings
+            warnings.warn(f"Failed to log final results to wandb: {e}", RuntimeWarning)
 
     return best_spectrum.cpu(), solver_status, solver_time

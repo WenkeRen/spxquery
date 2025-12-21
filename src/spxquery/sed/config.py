@@ -92,6 +92,19 @@ class SEDConfig:
         Maximum number of iterative sigma clipping passes. Default: 10.
     filter_profile : str
         Narrow-band filter shape. Currently only 'boxcar' supported. Default: 'boxcar'.
+    epsilon_weight : float
+        Small constant added to avoid division by zero. Default: 1e-10.
+    wandb_run : Any, optional
+        wandb run instance for experiment tracking. If provided, metrics will be logged
+        to wandb during training. Default: None (no wandb logging).
+    wandb_log_frequency : int
+        How often to log training metrics to wandb (in epochs). Default: 100.
+    wandb_log_spectrum_evolution : bool
+        Whether to log spectrum snapshots during training. Default: True.
+    wandb_spectrum_evolution_frequency : int
+        How often to log spectrum snapshots (in epochs). Default: 500.
+    wandb_track_convergence : bool
+        Whether to track convergence metrics for stopping decisions. Default: True.
 
     Attributes
     ----------
@@ -102,6 +115,12 @@ class SEDConfig:
     >>> config = SEDConfig(epochs=5000, regularization_weight=2.0)
     >>> config.to_yaml_file("my_config.yaml")
     >>> loaded = SEDConfig.from_yaml_file("my_config.yaml")
+
+    >>> # With wandb integration
+    >>> import wandb
+    >>> wandb.init(project="sed-reconstruction")
+    >>> config = SEDConfig(epochs=5000, wandb_run=wandb)
+    >>> # Metrics will be logged to wandb during training
     """
 
     # Global reconstruction parameters
@@ -147,6 +166,13 @@ class SEDConfig:
 
     # Numerical stability
     epsilon_weight: float = 1e-10  # Small constant added to avoid division by zero
+
+    # Optional wandb integration parameters
+    wandb_run: Any = None  # wandb run instance for experiment tracking (optional)
+    wandb_log_frequency: int = 100  # How often to log metrics (in epochs)
+    wandb_log_spectrum_evolution: bool = True  # Whether to log spectrum snapshots during training
+    wandb_spectrum_evolution_frequency: int = 500  # How often to log spectrum snapshots (in epochs)
+    wandb_track_convergence: bool = True  # Whether to track convergence metrics for stopping decisions
 
     def __post_init__(self):
         """Validate configuration parameters after initialization."""
@@ -246,6 +272,128 @@ class SEDConfig:
         # Validate epsilon_weight
         if self.epsilon_weight <= 0:
             raise ValueError(f"epsilon_weight must be positive, got {self.epsilon_weight}")
+
+        # Validate wandb parameters
+        if self.wandb_log_frequency <= 0:
+            raise ValueError(f"wandb_log_frequency must be positive, got {self.wandb_log_frequency}")
+        if self.wandb_spectrum_evolution_frequency <= 0:
+            raise ValueError(f"wandb_spectrum_evolution_frequency must be positive, got {self.wandb_spectrum_evolution_frequency}")
+
+    def is_wandb_enabled(self) -> bool:
+        """
+        Check if wandb logging is enabled.
+
+        Returns
+        -------
+        bool
+            True if wandb_run is not None, False otherwise.
+        """
+        return self.wandb_run is not None
+
+    def log_to_wandb(self, metrics: Dict[str, Any], step: Optional[int] = None) -> None:
+        """
+        Log metrics to wandb if wandb is enabled.
+
+        Parameters
+        ----------
+        metrics : Dict[str, Any]
+            Dictionary of metrics to log.
+        step : Optional[int]
+            Step number for the metrics. If None, wandb will use internal step counter.
+        """
+        if self.is_wandb_enabled():
+            try:
+                self.wandb_run.log(metrics, step=step)
+            except Exception as e:
+                # Fail silently if wandb logging fails
+                import warnings
+                warnings.warn(f"Failed to log to wandb: {e}", RuntimeWarning)
+
+    def log_spectrum_to_wandb(self, spectrum_data, wavelength_data, step: int,
+                            title: str = "Spectrum") -> None:
+        """
+        Log spectrum plot to wandb if wandb is enabled.
+
+        Parameters
+        ----------
+        spectrum_data : array_like
+            Spectrum data to plot.
+        wavelength_data : array_like
+            Wavelength data for the spectrum.
+        step : int
+            Step number for the plot.
+        title : str
+            Title for the plot.
+        """
+        if self.is_wandb_enabled() and self.wandb_log_spectrum_evolution:
+            try:
+                import matplotlib.pyplot as plt
+
+                # Create a temporary figure
+                fig, ax = plt.subplots(figsize=(10, 6))
+                ax.plot(wavelength_data, spectrum_data, 'b-', linewidth=1.5)
+                ax.set_xlabel('Wavelength (μm)')
+                ax.set_ylabel('Flux')
+                ax.set_title(f'{title} - Step {step}')
+                ax.grid(True, alpha=0.3)
+
+                # Import wandb Image
+                from wandb import Image
+                # Log to wandb
+                self.wandb_run.log({title.lower(): Image(fig)}, step=step)
+
+                # Close the figure to free memory
+                plt.close(fig)
+            except Exception as e:
+                # Fail silently if wandb logging fails
+                import warnings
+                warnings.warn(f"Failed to log spectrum to wandb: {e}", RuntimeWarning)
+
+    def to_wandb_config(self) -> Dict[str, Any]:
+        """
+        Convert configuration to wandb-compatible dictionary (excluding wandb_run).
+
+        Returns
+        -------
+        Dict[str, Any]
+            Configuration dictionary suitable for wandb.init(config=...).
+        """
+        # Manually build config dict to avoid serialization issues with wandb module
+        config_dict = {
+            'wavelength_range': self.wavelength_range,
+            'global_resolution': self.global_resolution,
+            'device': self.device,
+            'optimizer': self.optimizer,
+            'learning_rate': self.learning_rate,
+            'epochs': self.epochs,
+            'learning_rate_scheduler_type': self.learning_rate_scheduler_type,
+            'learning_rate_warmup_epochs': self.learning_rate_warmup_epochs,
+            'learning_rate_min_factor': self.learning_rate_min_factor,
+            'dip_noise_std': self.dip_noise_std,
+            'dip_filters': self.dip_filters,
+            'dip_depth': self.dip_depth,
+            'dip_noise_jitter_initial_ratio': self.dip_noise_jitter_initial_ratio,
+            'dip_noise_jitter_min_ratio': self.dip_noise_jitter_min_ratio,
+            'regularization_weight': self.regularization_weight,
+            'cwt_scales': self.cwt_scales,
+            'sigma_threshold': self.sigma_threshold,
+            'bad_flags': self.bad_flags,
+            'enable_sigma_clip': self.enable_sigma_clip,
+            'sigma_clip_sigma': self.sigma_clip_sigma,
+            'sigma_clip_window': self.sigma_clip_window,
+            'sigma_clip_max_iterations': self.sigma_clip_max_iterations,
+            'filter_profile': self.filter_profile,
+            'epsilon_weight': self.epsilon_weight,
+            'wandb_log_frequency': self.wandb_log_frequency,
+            'wandb_log_spectrum_evolution': self.wandb_log_spectrum_evolution,
+            'wandb_spectrum_evolution_frequency': self.wandb_spectrum_evolution_frequency,
+            'wandb_track_convergence': self.wandb_track_convergence,
+        }
+
+        # Handle wandb_run separately
+        config_dict['wandb_run_active'] = self.wandb_run is not None
+
+        return config_dict
 
     def to_dict(self) -> Dict[str, Any]:
         """
