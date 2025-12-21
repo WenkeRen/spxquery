@@ -183,9 +183,9 @@ class SEDConfig:
 
     # Optional wandb integration parameters
     wandb_run: Any = None  # wandb run instance for experiment tracking (optional)
-    wandb_log_frequency: int = 100  # How often to log metrics (in epochs)
-    wandb_log_spectrum_evolution: bool = True  # Whether to log spectrum snapshots during training
-    wandb_spectrum_evolution_frequency: int = 500  # How often to log spectrum snapshots (in epochs)
+    wandb_log_frequency: int = 100  # How often to log metrics and save data (in epochs)
+    wandb_save_raw_data: bool = True  # Save raw spectrum data instead of PNG images
+    wandb_save_model_artifacts: bool = True  # Save model state and input noise as artifacts
     wandb_track_convergence: bool = True  # Whether to track convergence metrics for stopping decisions
 
     # EMA (Exponential Moving Average) parameters for spectrum quality control
@@ -301,10 +301,6 @@ class SEDConfig:
         # Validate wandb parameters
         if self.wandb_log_frequency <= 0:
             raise ValueError(f"wandb_log_frequency must be positive, got {self.wandb_log_frequency}")
-        if self.wandb_spectrum_evolution_frequency <= 0:
-            raise ValueError(
-                f"wandb_spectrum_evolution_frequency must be positive, got {self.wandb_spectrum_evolution_frequency}"
-            )
 
         # Validate EMA parameters
         if self.use_ema:
@@ -349,46 +345,58 @@ class SEDConfig:
 
                 warnings.warn(f"Failed to log to wandb: {e}", RuntimeWarning)
 
-    def log_spectrum_to_wandb(self, spectrum_data, wavelength_data, step: int, title: str = "Spectrum") -> None:
+    def log_spectrum_data_to_wandb(self, spectrum_data, wavelength_data, step: int, data_type: str = "spectrum") -> None:
         """
-        Log spectrum plot to wandb if wandb is enabled.
+        Log raw spectrum data to wandb if wandb is enabled and data saving is on.
 
         Parameters
         ----------
         spectrum_data : array_like
-            Spectrum data to plot.
+            Spectrum data to save.
         wavelength_data : array_like
             Wavelength data for the spectrum.
         step : int
-            Step number for the plot.
-        title : str
-            Title for the plot.
+            Step number for the data.
+        data_type : str
+            Type identifier for the spectrum data.
         """
-        if self.is_wandb_enabled() and self.wandb_log_spectrum_evolution:
+        if self.is_wandb_enabled() and self.wandb_save_raw_data:
             try:
-                import matplotlib.pyplot as plt
+                import json
+                import wandb
 
-                # Create a temporary figure
-                fig, ax = plt.subplots(figsize=(10, 6))
-                ax.plot(wavelength_data, spectrum_data, "b-", linewidth=1.5)
-                ax.set_xlabel("Wavelength (μm)")
-                ax.set_ylabel("Flux")
-                ax.set_title(f"{title} - Step {step}")
-                ax.grid(True, alpha=0.3)
+                # Convert to lists for JSON serialization
+                data_dict = {
+                    'spectrum': spectrum_data.tolist() if hasattr(spectrum_data, 'tolist') else list(spectrum_data),
+                    'wavelength': wavelength_data.tolist() if hasattr(wavelength_data, 'tolist') else list(wavelength_data),
+                    'epoch': step,
+                    'data_type': data_type,
+                }
 
-                # Import wandb Image
-                from wandb import Image
+                # Create wandb Table for summary info
+                table = wandb.Table(columns=['epoch', 'data_type', 'n_pixels', 'flux_min', 'flux_max'])
+                table.add_data(step, data_type, len(spectrum_data),
+                             float(min(spectrum_data)), float(max(spectrum_data)))
 
-                # Log to wandb
-                self.wandb_run.log({title.lower(): Image(fig)}, step=step)
+                # Log both the table and create an artifact for the full data
+                self.wandb_run.log(
+                    {
+                        f'{data_type}_summary': table,
+                        f'{data_type}_data_step': step,
+                    },
+                    step=step,
+                )
 
-                # Close the figure to free memory
-                plt.close(fig)
+                # Create and log artifact for the full data
+                artifact = wandb.Artifact(f'{data_type}_epoch_{step}', type='spectrum_data')
+                with artifact.new_file(f'{data_type}_epoch_{step}.json', mode='w') as f:
+                    json.dump(data_dict, f)
+                self.wandb_run.log_artifact(artifact, aliases=[f'epoch_{step}'])
+
             except Exception as e:
                 # Fail silently if wandb logging fails
                 import warnings
-
-                warnings.warn(f"Failed to log spectrum to wandb: {e}", RuntimeWarning)
+                warnings.warn(f"Failed to log spectrum data to wandb: {e}", RuntimeWarning)
 
     def to_wandb_config(self) -> Dict[str, Any]:
         """
@@ -426,8 +434,8 @@ class SEDConfig:
             "filter_profile": self.filter_profile,
             "epsilon_weight": self.epsilon_weight,
             "wandb_log_frequency": self.wandb_log_frequency,
-            "wandb_log_spectrum_evolution": self.wandb_log_spectrum_evolution,
-            "wandb_spectrum_evolution_frequency": self.wandb_spectrum_evolution_frequency,
+            "wandb_save_raw_data": self.wandb_save_raw_data,
+            "wandb_save_model_artifacts": self.wandb_save_model_artifacts,
             "wandb_track_convergence": self.wandb_track_convergence,
             "use_ema": self.use_ema,
             "ema_decay": self.ema_decay,

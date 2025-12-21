@@ -593,6 +593,29 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
                     "regularization_weight": config.regularization_weight,
                 }
             )
+
+            # Save initial model state and input noise as artifacts if enabled
+            if config.wandb_save_model_artifacts:
+                import wandb
+                import json
+
+                # Save initial model state
+                model_artifact = wandb.Artifact('model_initial', type='model')
+                with model_artifact.new_file('model_initial.pth', mode='wb') as f:
+                    torch.save(model.state_dict(), f)
+                config.wandb_run.log_artifact(model_artifact, aliases=['initial'])
+
+                # Save input static noise
+                noise_artifact = wandb.Artifact('input_static_noise', type='noise')
+                noise_data = {
+                    'z_static': model.z_static.detach().cpu().numpy().tolist(),
+                    'noise_std': config.dip_noise_std,
+                    'n_pixels': model.n_pixels,
+                }
+                with noise_artifact.new_file('static_noise.json', mode='w') as f:
+                    json.dump(noise_data, f)
+                config.wandb_run.log_artifact(noise_artifact)
+
         except Exception as e:
             import warnings
 
@@ -729,13 +752,13 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
                 )
 
                 # Log EMA spectrum evolution periodically
-                if config.wandb_log_spectrum_evolution and epoch % config.wandb_spectrum_evolution_frequency == 0:
+                if epoch % config.wandb_log_frequency == 0:
                     ema_spectrum = ema_tracker.get_ema_spectrum()
                     if ema_spectrum is not None:
                         ema_spectrum_cpu = ema_spectrum.detach().cpu().numpy()
                         wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
-                        config.log_spectrum_to_wandb(
-                            ema_spectrum_cpu, wavelength_cpu, epoch, title=f"EMA_Spectrum_Epoch_{epoch}"
+                        config.log_spectrum_data_to_wandb(
+                            ema_spectrum_cpu, wavelength_cpu, epoch, data_type="ema_spectrum"
                         )
             elif ema_tracker is not None:
                 # EMA enabled but not yet active
@@ -745,12 +768,12 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
             config.log_to_wandb(metrics, step=epoch)
 
             # Log spectrum evolution if enabled
-            if config.wandb_log_spectrum_evolution and epoch % config.wandb_spectrum_evolution_frequency == 0:
+            if epoch % config.wandb_log_frequency == 0:
                 # Use fixed noise only for consistent spectrum logging
                 fixed_spectrum = model.forward_fixed_noise()
                 spectrum_cpu = fixed_spectrum.detach().cpu().numpy()
                 wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
-                config.log_spectrum_to_wandb(spectrum_cpu, wavelength_cpu, epoch, title=f"Spectrum_Epoch_{epoch}")
+                config.log_spectrum_data_to_wandb(spectrum_cpu, wavelength_cpu, epoch, data_type="spectrum")
 
         # Progress bar logging (existing functionality)
         if epoch % 100 == 0:
@@ -857,18 +880,22 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
             config.log_to_wandb(final_metrics)
 
-            # Log final spectrum
-            if config.wandb_log_spectrum_evolution:
-                # Use fixed noise only for consistent final spectrum logging
-                final_fixed_spectrum = model.forward_fixed_noise()
-                final_spectrum_cpu = final_fixed_spectrum.detach().cpu().numpy()
-                wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
-                config.log_spectrum_to_wandb(final_spectrum_cpu, wavelength_cpu, config.epochs, title="Final_Spectrum")
+            # Save final model state and spectrum data as artifacts if enabled
+            if config.wandb_save_model_artifacts:
+                import wandb
 
-                # Also log the final epoch spectrum for comparison
+                # Save final model state
+                final_model_artifact = wandb.Artifact('model_final', type='model')
+                with final_model_artifact.new_file('model_final.pth', mode='wb') as f:
+                    torch.save(model.state_dict(), f)
+                config.wandb_run.log_artifact(final_model_artifact, aliases=['final'])
+
+            # Log final spectrum data if enabled
+            if config.wandb_save_raw_data:
                 final_spectrum_cpu = final_spectrum.cpu().numpy()
-                config.log_spectrum_to_wandb(
-                    final_spectrum_cpu, wavelength_cpu, config.epochs, title="Final_Epoch_Spectrum"
+                wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
+                config.log_spectrum_data_to_wandb(
+                    final_spectrum_cpu, wavelength_cpu, config.epochs, data_type="final_spectrum"
                 )
 
                 # Log EMA spectrum if available and different from final spectrum
@@ -876,8 +903,8 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
                     ema_final_spectrum = ema_tracker.get_ema_spectrum()
                     if ema_final_spectrum is not None:
                         ema_spectrum_cpu = ema_final_spectrum.detach().cpu().numpy()
-                        config.log_spectrum_to_wandb(
-                            ema_spectrum_cpu, wavelength_cpu, config.epochs, title="Final_EMA_Spectrum"
+                        config.log_spectrum_data_to_wandb(
+                            ema_spectrum_cpu, wavelength_cpu, config.epochs, data_type="final_ema_spectrum"
                         )
 
         except Exception as e:
