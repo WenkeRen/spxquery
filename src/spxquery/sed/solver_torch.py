@@ -223,16 +223,94 @@ class SpectralUNet(nn.Module):
 
 class SpectralModel(nn.Module):
     """
-    Wrapper for SpectralUNet that holds the fixed input noise.
+    Wrapper for SpectralUNet that holds static noise and optional jitter.
+
+    The input to the network consists of:
+    - Static noise: Fixed component with dip_noise_std
+    - Optional jitter: Additional component that can decay linearly
     """
 
     def __init__(self, n_pixels: int, config: SEDConfig):
         super().__init__()
         self.net = SpectralUNet(in_channels=1, out_channels=1, base_filters=config.dip_filters, depth=config.dip_depth)
+        self.config = config
+        self.n_pixels = n_pixels
 
-        # Fixed input noise
+        # Static noise component (fixed throughout training)
         # Shape: (1, 1, N)
-        self.register_buffer("z", torch.randn(1, 1, n_pixels) * config.dip_noise_std)
+        self.register_buffer("z_static", torch.randn(1, 1, n_pixels) * config.dip_noise_std)
+
+        # Dynamic jitter component (will be updated during training)
+        self.register_buffer("z_jitter", torch.zeros(1, 1, n_pixels))
+
+        # Current jitter standard deviation
+        self.register_buffer("current_jitter_std", torch.tensor(0.0))
+
+        # Initialize jitter
+        self.update_jitter(0)
+
+    def update_jitter(self, epoch: int):
+        """
+        Update the jitter component based on current epoch.
+
+        Parameters
+        ----------
+        epoch : int
+            Current training epoch (0-indexed).
+        """
+        if self.config.dip_noise_jitter_initial_ratio is None:
+            # No jitter enabled
+            self.current_jitter_std = torch.tensor(0.0)
+            self.z_jitter.zero_()
+            return
+
+        # Calculate initial jitter standard deviation
+        initial_jitter_std = self.config.dip_noise_std * self.config.dip_noise_jitter_initial_ratio
+
+        if self.config.dip_noise_jitter_min_ratio is None:
+            # No decay, use constant jitter
+            self.current_jitter_std = torch.tensor(initial_jitter_std)
+        else:
+            # Linear decay from initial ratio to minimum ratio
+            if epoch < self.config.learning_rate_warmup_epochs:
+                # During warmup, use full initial jitter
+                current_jitter_std = initial_jitter_std
+            else:
+                # Linear decay phase
+                decay_progress = (epoch - self.config.learning_rate_warmup_epochs) / (
+                    self.config.epochs - self.config.learning_rate_warmup_epochs
+                )
+                decay_progress = min(decay_progress, 1.0)  # Clamp to [0, 1]
+
+                # Linear interpolation from initial to minimum jitter
+                current_ratio = (
+                    self.config.dip_noise_jitter_min_ratio +
+                    (self.config.dip_noise_jitter_initial_ratio - self.config.dip_noise_jitter_min_ratio) *
+                    (1 - decay_progress)
+                )
+                current_jitter_std = self.config.dip_noise_std * current_ratio
+
+            self.current_jitter_std = torch.tensor(current_jitter_std)
+
+        # Generate new jitter with current standard deviation
+        if self.current_jitter_std > 0:
+            # Generate jitter on the same device as static noise
+            device = self.z_static.device
+            self.z_jitter = torch.randn(1, 1, self.n_pixels, device=device) * self.current_jitter_std
+        else:
+            self.z_jitter.zero_()
+
+    @property
+    def z(self):
+        """
+        Combined input noise (static + jitter).
+
+        Returns
+        -------
+        torch.Tensor
+            Combined noise tensor with shape (1, 1, N).
+        """
+        return self.z_static + self.z_jitter
 
     def forward(self):
         # Output shape: (N,)
@@ -323,6 +401,9 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     pbar = tqdm(range(config.epochs), desc="Optimizing Spectrum")
 
     for epoch in pbar:
+        # Update jitter component based on current epoch
+        model.update_jitter(epoch)
+
         optimizer.zero_grad()
 
         # Generate spectrum on main device

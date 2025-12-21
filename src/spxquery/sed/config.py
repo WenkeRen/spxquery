@@ -7,7 +7,7 @@ from SPHEREx narrow-band photometry using PyTorch-based Deep Image Prior.
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -63,6 +63,13 @@ class SEDConfig:
         Number of filters in U-Net architecture. Default: 32.
     dip_depth : int
         Depth of U-Net architecture (number of downsampling stages). Default: 3.
+    dip_noise_jitter_initial_ratio : Optional[float]
+        Initial jitter as ratio of dip_noise_std. Default: 0.3.
+        None means no jitter is applied. 0.3 means jitter = 0.3 x dip_noise_std.
+    dip_noise_jitter_min_ratio : Optional[float]
+        Minimum jitter ratio for linear decay. Default: None.
+        None means no decay is applied. Otherwise, jitter decays linearly from
+        initial_ratio to min_ratio over the course of training.
     regularization_weight : float
         Weight for CWT regularization term. Default: 1.0.
     cwt_scales : List[float]
@@ -116,6 +123,10 @@ class SEDConfig:
     dip_noise_std: float = 0.1
     dip_filters: int = 32
     dip_depth: int = 3
+
+    # Noise jittering parameters
+    dip_noise_jitter_initial_ratio: Optional[float] = 0.3  # Initial jitter as ratio of dip_noise_std, None means no jitter
+    dip_noise_jitter_min_ratio: Optional[float] = None  # Minimum jitter ratio, None means no decay
 
     # Regularization (CWT)
     regularization_weight: float = 1.0
@@ -180,6 +191,27 @@ class SEDConfig:
             raise ValueError(f"dip_filters must be positive, got {self.dip_filters}")
         if self.dip_depth < 1 or self.dip_depth > 10:
             raise ValueError(f"dip_depth must be between 1 and 10, got {self.dip_depth}")
+
+        # Validate noise jittering parameters
+        if self.dip_noise_jitter_initial_ratio is not None:
+            if self.dip_noise_jitter_initial_ratio < 0:
+                raise ValueError(
+                    f"dip_noise_jitter_initial_ratio must be non-negative, "
+                    f"got {self.dip_noise_jitter_initial_ratio}"
+                )
+
+        if self.dip_noise_jitter_min_ratio is not None:
+            if self.dip_noise_jitter_min_ratio < 0:
+                raise ValueError(
+                    f"dip_noise_jitter_min_ratio must be non-negative, "
+                    f"got {self.dip_noise_jitter_min_ratio}"
+                )
+            if self.dip_noise_jitter_initial_ratio is not None:
+                if self.dip_noise_jitter_min_ratio > self.dip_noise_jitter_initial_ratio:
+                    raise ValueError(
+                        f"dip_noise_jitter_min_ratio ({self.dip_noise_jitter_min_ratio}) "
+                        f"must be <= dip_noise_jitter_initial_ratio ({self.dip_noise_jitter_initial_ratio})"
+                    )
 
         # Validate regularization
         if self.regularization_weight < 0:
