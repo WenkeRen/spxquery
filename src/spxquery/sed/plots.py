@@ -30,7 +30,7 @@ BAND_WAVELENGTH_RANGES = {
 # Band colors for plotting
 BAND_COLORS = {
     "D1": "#8B4789",  # Purple
-    "D2": "#1f77b4",  # Blue  
+    "D2": "#1f77b4",  # Blue
     "D3": "#2ca02c",  # Green
     "D4": "#ff7f0e",  # Orange
     "D5": "#d62728",  # Red
@@ -113,7 +113,7 @@ def plot_reconstructed_spectrum(
         f"$\\chi^2_\\nu$={result.validation_metrics.chi2_nu:.3f}",
         fontsize=11,
     )
-    ax.legend(loc='best', fontsize=10)
+    ax.legend(loc="best", fontsize=10)
     ax.grid(alpha=0.3)
     ax.set_xlim(result.config.wavelength_range)
 
@@ -170,7 +170,7 @@ def plot_residuals(
         ax.scatter(wl, res, c=color, s=20, alpha=0.7, edgecolors="black", linewidth=0.5)
 
     # Add zero line
-    ax.axhline(0, color='red', linestyle='--', linewidth=1.5, label='Zero residual', zorder=1)
+    ax.axhline(0, color="red", linestyle="--", linewidth=1.5, label="Zero residual", zorder=1)
 
     # Labels and formatting
     ax.set_xlabel(r"Wavelength ($\mu$m)", fontsize=12)
@@ -181,7 +181,7 @@ def plot_residuals(
         f"Std = {np.std(all_residuals):.2e} $\\mu$Jy",
         fontsize=11,
     )
-    ax.legend(loc='best', fontsize=10)
+    ax.legend(loc="best", fontsize=10)
     ax.grid(alpha=0.3)
     ax.set_xlim(result.config.wavelength_range)
 
@@ -239,22 +239,20 @@ def plot_weighted_residuals(
         ax.scatter(wl, w_res, c=color, s=20, alpha=0.7, edgecolors="black", linewidth=0.5)
 
     # Add zero line and ±1, ±2 sigma lines
-    ax.axhline(0, color='red', linestyle='--', linewidth=1.5, label='Zero', zorder=1)
-    ax.axhline(1, color='orange', linestyle=':', linewidth=1, alpha=0.7, label='±1σ')
-    ax.axhline(-1, color='orange', linestyle=':', linewidth=1, alpha=0.7)
-    ax.axhline(2, color='yellow', linestyle=':', linewidth=1, alpha=0.5, label='±2σ')
-    ax.axhline(-2, color='yellow', linestyle=':', linewidth=1, alpha=0.5)
+    ax.axhline(0, color="red", linestyle="--", linewidth=1.5, label="Zero", zorder=1)
+    ax.axhline(1, color="orange", linestyle=":", linewidth=1, alpha=0.7, label="±1sig")
+    ax.axhline(-1, color="orange", linestyle=":", linewidth=1, alpha=0.7)
+    ax.axhline(2, color="yellow", linestyle=":", linewidth=1, alpha=0.5, label="±2sig")
+    ax.axhline(-2, color="yellow", linestyle=":", linewidth=1, alpha=0.5)
 
     # Labels and formatting
     ax.set_xlabel(r"Wavelength ($\mu$m)", fontsize=12)
     ax.set_ylabel(r"Weighted Residual ($\sigma$)", fontsize=12)
     ax.set_title(
-        f"Weighted Residuals\n"
-        f"Mean = {np.mean(all_weighted_residuals):.3f}, "
-        f"Std = {np.std(all_weighted_residuals):.3f}",
+        f"Weighted Residuals\nMean = {np.mean(all_weighted_residuals):.3f}, Std = {np.std(all_weighted_residuals):.3f}",
         fontsize=11,
     )
-    ax.legend(loc='best', fontsize=10)
+    ax.legend(loc="best", fontsize=10)
     ax.grid(alpha=0.3)
     ax.set_xlim(result.config.wavelength_range)
 
@@ -306,10 +304,15 @@ def plot_diagnostic_summary(
         residuals = (band_data.flux - model_flux) / band_data.flux_error
         all_weighted_residuals.extend(residuals)
 
-    ax4.hist(all_weighted_residuals, bins=50, alpha=0.7, color='steelblue', edgecolor='black')
-    ax4.axvline(0, color='red', linestyle='--', linewidth=1.5, label='Zero')
-    ax4.axvline(np.mean(all_weighted_residuals), color='orange', linestyle='-', linewidth=1.5,
-                label=f'Mean = {np.mean(all_weighted_residuals):.3f}')
+    ax4.hist(all_weighted_residuals, bins=50, alpha=0.7, color="steelblue", edgecolor="black")
+    ax4.axvline(0, color="red", linestyle="--", linewidth=1.5, label="Zero")
+    ax4.axvline(
+        np.mean(all_weighted_residuals),
+        color="orange",
+        linestyle="-",
+        linewidth=1.5,
+        label=f"Mean = {np.mean(all_weighted_residuals):.3f}",
+    )
     ax4.set_xlabel("Weighted Residual ($\\sigma$)")
     ax4.set_ylabel("Count")
     ax4.set_title("Weighted Residual Distribution")
@@ -318,7 +321,7 @@ def plot_diagnostic_summary(
 
     # Panel 5: Quality metrics summary
     ax5 = fig.add_subplot(gs[2, 1])
-    ax5.axis('off')
+    ax5.axis("off")
 
     metrics_text = f"""Quality Metrics:
 
@@ -340,15 +343,22 @@ Total Observations: {sum(band.n_measurements for band in result.band_data.values
 Resolution: {result.config.global_resolution}
 """
 
-    ax5.text(0.1, 0.9, metrics_text, transform=ax5.transAxes, fontsize=10,
-             verticalalignment='top', fontfamily='monospace',
-             bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.5))
+    ax5.text(
+        0.1,
+        0.9,
+        metrics_text,
+        transform=ax5.transAxes,
+        fontsize=10,
+        verticalalignment="top",
+        fontfamily="monospace",
+        bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.5),
+    )
 
     # Overall title
-    fig.suptitle("SED Reconstruction Diagnostic Summary", fontsize=14, fontweight='bold')
+    fig.suptitle("SED Reconstruction Diagnostic Summary", fontsize=14, fontweight="bold")
 
     if save_path:
-        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
         logger.info(f"Saved diagnostic plot to {save_path}")
 
     return fig
@@ -378,7 +388,7 @@ def save_all_plots(
     diag_fig = plot_diagnostic_summary(result)
     for fmt in formats:
         diag_path = output_dir / f"sed_diagnostic.{fmt}"
-        diag_fig.savefig(diag_path, dpi=300, bbox_inches='tight')
+        diag_fig.savefig(diag_path, dpi=300, bbox_inches="tight")
         logger.info(f"Saved diagnostic plot to {diag_path}")
 
     # Save individual spectrum plot
@@ -386,7 +396,7 @@ def save_all_plots(
     plot_reconstructed_spectrum(result, ax=ax)
     for fmt in formats:
         spec_path = output_dir / f"sed_spectrum.{fmt}"
-        spectrum_fig.savefig(spec_path, dpi=300, bbox_inches='tight')
+        spectrum_fig.savefig(spec_path, dpi=300, bbox_inches="tight")
         logger.info(f"Saved spectrum plot to {spec_path}")
 
-    plt.close('all')
+    plt.close("all")

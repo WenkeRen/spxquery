@@ -215,7 +215,7 @@ def apply_rolling_mad_sigma_clip_single_band(
             maxiters=max_iterations,
             cenfunc="median",
             stdfunc="mad_std",
-            masked=True
+            masked=True,
         )
         outlier_mask = clipped_data.mask
         outlier_indices = band_data.index[outlier_mask].values
@@ -292,7 +292,7 @@ def apply_rolling_mad_sigma_clip_single_band(
 
         # Remove outliers from data for next iteration
         # Use .drop() to remove by index labels
-        current_data = current_data.drop(outlier_indices_this_iter, errors='ignore')
+        current_data = current_data.drop(outlier_indices_this_iter, errors="ignore")
 
         # Check if too few measurements remain for another iteration
         if len(current_data) < sigma_clip_window:

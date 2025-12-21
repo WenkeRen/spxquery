@@ -60,9 +60,7 @@ class ValidationMetrics:
     normality_pvalue: float
 
 
-def compute_residuals(
-    y: np.ndarray, H: sp.csr_matrix, spectrum: np.ndarray
-) -> np.ndarray:
+def compute_residuals(y: np.ndarray, H: sp.csr_matrix, spectrum: np.ndarray) -> np.ndarray:
     """
     Compute raw residuals between observations and model.
 
@@ -87,9 +85,7 @@ def compute_residuals(
     return residuals
 
 
-def compute_weighted_residuals(
-    residuals: np.ndarray, weights: np.ndarray
-) -> np.ndarray:
+def compute_weighted_residuals(residuals: np.ndarray, weights: np.ndarray) -> np.ndarray:
     """
     Compute weighted residuals.
 
@@ -135,9 +131,7 @@ def compute_chi_squared(weighted_residuals: np.ndarray) -> float:
     return chi_squared
 
 
-def compute_reduced_chi_squared(
-    chi_squared: float, n_measurements: int, n_parameters: int
-) -> float:
+def compute_reduced_chi_squared(chi_squared: float, n_measurements: int, n_parameters: int) -> float:
     """
     Compute reduced chi-squared (chi^2 / dof).
 
@@ -165,8 +159,7 @@ def compute_reduced_chi_squared(
     dof = n_measurements - n_parameters
     if dof <= 0:
         logger.warning(
-            f"Degrees of freedom <= 0 (M={n_measurements}, N={n_parameters}). "
-            "Cannot compute reduced chi-squared."
+            f"Degrees of freedom <= 0 (M={n_measurements}, N={n_parameters}). Cannot compute reduced chi-squared."
         )
         return np.nan
 
@@ -255,7 +248,9 @@ def assess_reconstruction_quality(
     logger.info(f"  Chi-squared: {chi_squared:.2f} (dof={dof})")
     logger.info(f"  Reduced chi-squared: {chi_squared_reduced:.3f}")
     logger.info(f"  Weighted residuals: mean={weighted_residual_mean:.3f}, std={weighted_residual_std:.3f}")
-    logger.info(f"  Normality p-value: {normality_pvalue:.3f}" if not np.isnan(normality_pvalue) else "  Normality p-value: N/A")
+    logger.info(
+        f"  Normality p-value: {normality_pvalue:.3f}" if not np.isnan(normality_pvalue) else "  Normality p-value: N/A"
+    )
 
     # Interpret reduced chi-squared
     if 0.5 <= chi_squared_reduced <= 2.0:
