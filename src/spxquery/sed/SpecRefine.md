@@ -307,7 +307,7 @@ The system supports extensive customization through the SEDConfig class:
 
 - `learning_rate`: Adam optimizer learning rate (default: 0.001)
 - `epochs`: Number of optimization iterations (default: 3000)
-- `learning_rate_scheduler_type`: 'none', 'cosine', or 'cosine_warmup'
+- `learning_rate_scheduler_type`: 'none', 'cosine', 'cosine_warmup', or 'warmup'
 
 **Regularization parameters:**
 

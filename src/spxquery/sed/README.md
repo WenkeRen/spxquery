@@ -83,7 +83,7 @@ sed/
 
 - `epochs` (int): Number of optimization iterations (default: 3000)
 - `learning_rate` (float): Adam optimizer learning rate (default: 0.001)
-- `learning_rate_scheduler_type` (str): 'none', 'cosine', or 'cosine_warmup' (default: 'cosine_warmup')
+- `learning_rate_scheduler_type` (str): 'none', 'cosine', 'cosine_warmup', or 'warmup' (default: 'cosine_warmup')
 - `learning_rate_warmup_epochs` (int): Warmup epochs for cosine scheduler (default: 150)
 
 ### Regularization Parameters

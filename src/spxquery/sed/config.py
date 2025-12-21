@@ -50,7 +50,7 @@ class SEDConfig:
     epochs : int
         Number of training iterations. Default: 3000.
     learning_rate_scheduler_type : str
-        Learning rate scheduler type. Options: 'none', 'cosine', 'cosine_warmup'.
+        Learning rate scheduler type. Options: 'none', 'cosine', 'cosine_warmup', 'warmup'.
         Default: 'cosine_warmup' (5% linear warmup + cosine decay).
     learning_rate_warmup_epochs : int
         Number of epochs for linear warmup phase. Default: 150 (5% of 3000).
@@ -200,7 +200,7 @@ class SEDConfig:
             raise ValueError(f"epochs must be positive, got {self.epochs}")
 
         # Validate learning rate scheduling parameters
-        valid_schedulers = ["none", "cosine", "cosine_warmup"]
+        valid_schedulers = ["none", "cosine", "cosine_warmup", "warmup"]
         if self.learning_rate_scheduler_type not in valid_schedulers:
             raise ValueError(f"learning_rate_scheduler_type must be one of {valid_schedulers}, got '{self.learning_rate_scheduler_type}'")
         if self.learning_rate_warmup_epochs < 0:

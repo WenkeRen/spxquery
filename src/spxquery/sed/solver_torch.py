@@ -96,6 +96,54 @@ def create_learning_rate_scheduler(optimizer, config: SEDConfig):
             self.base_lrs = state_dict["base_lrs"]
             self.current_epoch = state_dict["current_epoch"]
 
+    class WarmupOnlyScheduler:
+        """
+        Custom learning rate scheduler with linear warmup and constant learning rate.
+
+        This scheduler implements:
+        - Linear warmup from 0 to peak learning rate
+        - Constant learning rate after warmup phase (no decay)
+        """
+
+        def __init__(self, optimizer, warmup_epochs):
+            self.optimizer = optimizer
+            self.warmup_epochs = warmup_epochs
+            self.base_lrs = [group["lr"] for group in optimizer.param_groups]
+            self.current_epoch = 0
+
+        def step(self):
+            """Update learning rates based on current epoch."""
+            if self.current_epoch < self.warmup_epochs:
+                # Linear warmup phase
+                lr_factor = self.current_epoch / self.warmup_epochs
+            else:
+                # Constant learning rate phase
+                lr_factor = 1.0
+
+            # Update learning rates for all parameter groups
+            for i, param_group in enumerate(self.optimizer.param_groups):
+                param_group["lr"] = self.base_lrs[i] * lr_factor
+
+            self.current_epoch += 1
+
+        def get_last_lr(self):
+            """Get current learning rates."""
+            return [group["lr"] for group in self.optimizer.param_groups]
+
+        def state_dict(self):
+            """Get scheduler state dictionary for saving/loading."""
+            return {
+                "warmup_epochs": self.warmup_epochs,
+                "base_lrs": self.base_lrs,
+                "current_epoch": self.current_epoch,
+            }
+
+        def load_state_dict(self, state_dict):
+            """Load scheduler state from dictionary."""
+            self.warmup_epochs = state_dict["warmup_epochs"]
+            self.base_lrs = state_dict["base_lrs"]
+            self.current_epoch = state_dict["current_epoch"]
+
     if config.learning_rate_scheduler_type == "cosine":
         # Cosine annealing without warmup
         return torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -108,6 +156,12 @@ def create_learning_rate_scheduler(optimizer, config: SEDConfig):
             warmup_epochs=config.learning_rate_warmup_epochs,
             total_epochs=config.epochs,
             min_lr_factor=config.learning_rate_min_factor,
+        )
+    elif config.learning_rate_scheduler_type == "warmup":
+        # Linear warmup + constant learning rate (no decay)
+        return WarmupOnlyScheduler(
+            optimizer,
+            warmup_epochs=config.learning_rate_warmup_epochs,
         )
     else:
         raise ValueError(f"Unknown scheduler type: {config.learning_rate_scheduler_type}")
@@ -317,6 +371,20 @@ class SpectralModel(nn.Module):
         # Output shape: (N,)
         return self.net(self.z).squeeze()
 
+    def forward_fixed_noise(self):
+        """
+        Generate spectrum using only fixed noise (no jitter).
+
+        This method is useful for consistent evaluation and logging,
+        as it produces deterministic output independent of the current jitter state.
+
+        Returns
+        -------
+        torch.Tensor
+            Spectrum generated with fixed noise only, shape (N,).
+        """
+        return self.net(self.z_static).squeeze()
+
 
 def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     """
@@ -375,7 +443,7 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     scheduler = create_learning_rate_scheduler(optimizer, config)
     if scheduler is not None:
         logger.info(f"Using learning rate scheduler: {config.learning_rate_scheduler_type}")
-        if config.learning_rate_scheduler_type in ["cosine_warmup", "cosine"]:
+        if config.learning_rate_scheduler_type in ["cosine_warmup", "cosine", "warmup"]:
             logger.info(
                 f"Warmup epochs: {config.learning_rate_warmup_epochs}, Min LR factor: {config.learning_rate_min_factor}"
             )
@@ -395,9 +463,6 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     flux_scale_device = flux_scale.to(device)
 
     logger.info(f"Data flux scale (MAD-based): {flux_scale.item():.4e}")
-
-    best_loss = float("inf")
-    best_spectrum = None
 
     # Model evolution tracking for convergence analysis
     previous_spectrum = None
@@ -470,9 +535,6 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
         # Logging and model evolution tracking
         current_loss = loss.item()
-        if current_loss < best_loss:
-            best_loss = current_loss
-            best_spectrum = spectrum.detach().clone()
 
         # Track model evolution for convergence analysis
         if config.wandb_track_convergence and previous_spectrum is not None:
@@ -511,7 +573,6 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
                 'data_loss': loss_data.item(),
                 'regularization_loss': loss_reg.item(),
                 'learning_rate': current_lr,
-                'best_loss_so_far': best_loss,
             }
 
             # Add convergence metrics if available
@@ -534,7 +595,9 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
             # Log spectrum evolution if enabled
             if (config.wandb_log_spectrum_evolution and
                 epoch % config.wandb_spectrum_evolution_frequency == 0):
-                spectrum_cpu = spectrum.detach().cpu().numpy()
+                # Use fixed noise only for consistent spectrum logging
+                fixed_spectrum = model.forward_fixed_noise()
+                spectrum_cpu = fixed_spectrum.detach().cpu().numpy()
                 wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
                 config.log_spectrum_to_wandb(
                     spectrum_cpu, wavelength_cpu, epoch,
@@ -556,14 +619,16 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     end_time = time.time()
     solver_time = end_time - start_time
 
-    # Create status message
-    if best_spectrum is not None:
-        solver_status = "success"
-    else:
-        solver_status = "failed"
-        best_spectrum = torch.zeros(config.global_resolution)
+    # Get final spectrum from the last epoch using fixed noise only
+    final_spectrum = model.forward_fixed_noise().detach()
 
-    logger.info(f"Optimization complete. Status: {solver_status}, Time: {solver_time:.2f}s, Best Loss: {best_loss:.4e}")
+    # Create status message
+    solver_status = "success"
+
+    logger.info(
+        f"Optimization complete. Status: {solver_status}, Time: {solver_time:.2f}s, "
+        f"Final Loss: {current_loss:.4e}"
+    )
 
     # Final wandb logging and convergence analysis
     if config.is_wandb_enabled():
@@ -573,7 +638,7 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
                 'training_completed': True,
                 'final_status': solver_status,
                 'total_time_seconds': solver_time,
-                'final_best_loss': best_loss,
+                'final_loss': current_loss,
                 'total_epochs_completed': config.epochs,
                 'epochs_per_second': config.epochs / solver_time,
             }
@@ -612,15 +677,24 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
             # Log final spectrum
             if config.wandb_log_spectrum_evolution:
-                best_spectrum_cpu = best_spectrum.detach().cpu().numpy()
+                # Use fixed noise only for consistent final spectrum logging
+                final_fixed_spectrum = model.forward_fixed_noise()
+                final_spectrum_cpu = final_fixed_spectrum.detach().cpu().numpy()
                 wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
                 config.log_spectrum_to_wandb(
-                    best_spectrum_cpu, wavelength_cpu, config.epochs,
+                    final_spectrum_cpu, wavelength_cpu, config.epochs,
                     title="Final_Spectrum"
+                )
+
+                # Also log the final epoch spectrum for comparison
+                final_spectrum_cpu = final_spectrum.cpu().numpy()
+                config.log_spectrum_to_wandb(
+                    final_spectrum_cpu, wavelength_cpu, config.epochs,
+                    title="Final_Epoch_Spectrum"
                 )
 
         except Exception as e:
             import warnings
             warnings.warn(f"Failed to log final results to wandb: {e}", RuntimeWarning)
 
-    return best_spectrum.cpu(), solver_status, solver_time
+    return final_spectrum.cpu(), solver_status, solver_time
