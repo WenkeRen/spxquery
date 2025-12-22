@@ -155,6 +155,8 @@ class EnsembleResult:
         Ensemble-specific metadata including strategy and aggregation details.
     band_data : Dict[str, BandData]
         Input photometry data per band (shared across ensemble).
+    validation_metrics : ValidationMetrics
+        Quality assessment metrics for the ensemble mean spectrum.
     """
 
     wavelength: np.ndarray
@@ -163,19 +165,13 @@ class EnsembleResult:
     member_results: List[SEDReconstructionResult]
     ensemble_metadata: Dict[str, any]
     band_data: Dict[str, any]
+    validation_metrics: ValidationMetrics
 
     # Computed properties
     ensemble_size: int
     mean_flux: np.ndarray
     std_flux: np.ndarray
     median_flux: np.ndarray
-
-    def __post_init__(self):
-        """Compute derived statistics after initialization."""
-        self.ensemble_size = len(self.member_results)
-        self.mean_flux = np.mean(self.ensemble_fluxes, axis=0)
-        self.std_flux = np.std(self.ensemble_fluxes, axis=0, ddof=1)
-        self.median_flux = np.median(self.ensemble_fluxes, axis=0)
 
     def save_all(self, output_dir) -> None:
         """
@@ -246,4 +242,20 @@ class EnsembleResult:
             "std_flux": self.std_flux.tolist(),
             "median_flux": self.median_flux.tolist(),
             "ensemble_metadata": self.ensemble_metadata,
+            "validation_metrics": {
+                "chi_squared": self.validation_metrics.chi_squared,
+                "chi_squared_per_obs": self.validation_metrics.chi_squared_per_obs,
+                "n_obs": self.validation_metrics.n_obs,
+                "n_sample": self.validation_metrics.n_sample,
+                "residual_mean": self.validation_metrics.residual_mean,
+                "residual_std": self.validation_metrics.residual_std,
+                "weighted_residual_mean": self.validation_metrics.weighted_residual_mean,
+                "weighted_residual_std": self.validation_metrics.weighted_residual_std,
+                "max_residual": self.validation_metrics.max_residual,
+                "normality_pvalue": self.validation_metrics.normality_pvalue,
+                "negative_flux_fraction": self.validation_metrics.negative_flux_fraction,
+                "smoothness_tv": self.validation_metrics.smoothness_tv,
+                "residual_oscillation": self.validation_metrics.residual_oscillation,
+                "residual_rms": self.validation_metrics.residual_rms,
+            },
         }

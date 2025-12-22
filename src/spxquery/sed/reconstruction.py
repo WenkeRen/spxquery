@@ -223,6 +223,31 @@ class SEDReconstructor:
         # Convert to numpy array
         ensemble_fluxes = np.array(ensemble_fluxes)
 
+        # Compute ensemble statistics
+        mean_flux = np.mean(ensemble_fluxes, axis=0)
+        std_flux = np.std(ensemble_fluxes, axis=0, ddof=1)
+        median_flux = np.median(ensemble_fluxes, axis=0)
+
+        # Build global dataset once for validation (minimize computation time)
+        logger.info("Building global dataset for ensemble validation")
+        global_dataset = build_global_observation_data(band_data_dict, self.config)
+
+        # Convert PyTorch tensors to numpy/SciPy format for validation
+        logger.info("Computing validation metrics for ensemble mean spectrum")
+        H_sparse = sp.csr_matrix(
+            (global_dataset.H_values.cpu().numpy(), global_dataset.H_indices.cpu().numpy()),
+            shape=global_dataset.H_shape,
+        )
+
+        # Compute validation metrics for ensemble mean flux
+        evaluator = SpectralEvaluator()
+        validation_metrics = evaluator.assess_reconstruction_quality(
+            y=global_dataset.observations.cpu().numpy(),
+            H=H_sparse,
+            spectrum=mean_flux,
+            weights=global_dataset.weights.cpu().numpy(),
+        )
+
         # Create ensemble metadata
         ensemble_metadata = {
             "strategy": self.config.ensemble_strategy,
@@ -233,7 +258,7 @@ class SEDReconstructor:
         if csv_path is not None:
             ensemble_metadata["csv_path"] = str(csv_path)
 
-        # Create ensemble result
+        # Create ensemble result with validation metrics
         ensemble_result = EnsembleResult(
             wavelength=member_results[0].wavelength,
             ensemble_fluxes=ensemble_fluxes,
@@ -241,16 +266,18 @@ class SEDReconstructor:
             member_results=member_results,
             ensemble_metadata=ensemble_metadata,
             band_data=band_data_dict,
+            validation_metrics=validation_metrics,
             ensemble_size=self.config.ensemble_size,
-            mean_flux=np.mean(ensemble_fluxes, axis=0),
-            std_flux=np.std(ensemble_fluxes, axis=0, ddof=1),
-            median_flux=np.median(ensemble_fluxes, axis=0),
+            mean_flux=mean_flux,
+            std_flux=std_flux,
+            median_flux=median_flux,
         )
 
         logger.info(
             f"Ensemble reconstruction complete: {self.config.ensemble_size} members, "
             f"mean chi^2/M = {np.mean([r.validation_metrics.chi_squared_per_obs for r in member_results]):.3f} "
-            f"+- {np.std([r.validation_metrics.chi_squared_per_obs for r in member_results]):.3f}"
+            f"+- {np.std([r.validation_metrics.chi_squared_per_obs for r in member_results]):.3f}, "
+            f"ensemble mean chi^2/M = {validation_metrics.chi_squared_per_obs:.3f}"
         )
 
         return ensemble_result
