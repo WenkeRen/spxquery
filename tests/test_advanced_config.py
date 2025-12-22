@@ -45,7 +45,7 @@ class TestPhotometryConfig:
             window_size=100,
             annulus_inner_offset=2.0,
             bg_sigma_clip_sigma=5.0,
-            pixel_scale_fallback=7.0
+            pixel_scale_fallback=7.0,
         )
         assert config.aperture_method == "fwhm"
         assert config.fwhm_multiplier == 3.0
@@ -81,10 +81,7 @@ class TestPhotometryConfig:
     def test_serialization(self):
         """Test YAML serialization."""
         config = PhotometryConfig(
-            aperture_method="fwhm",
-            background_method="window",
-            annulus_inner_offset=2.5,
-            bg_sigma_clip_sigma=4.0
+            aperture_method="fwhm", background_method="window", annulus_inner_offset=2.5, bg_sigma_clip_sigma=4.0
         )
         data = config.to_dict()
 
@@ -137,12 +134,7 @@ class TestVisualizationConfig:
 
     def test_serialization(self):
         """Test YAML serialization."""
-        config = VisualizationConfig(
-            sigma_threshold=3.0,
-            use_magnitude=True,
-            wavelength_cmap="plasma",
-            dpi=300
-        )
+        config = VisualizationConfig(sigma_threshold=3.0, use_magnitude=True, wavelength_cmap="plasma", dpi=300)
         data = config.to_dict()
 
         assert data["sigma_threshold"] == 3.0

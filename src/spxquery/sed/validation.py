@@ -268,18 +268,27 @@ class SpectralEvaluator:
 
     def _compute_normality_test(self, weighted_residuals: np.ndarray) -> float:
         """
-        Compute Shapiro-Wilk normality test p-value on weighted residuals.
+        Compute normality test p-value on weighted residuals.
 
+        Uses Shapiro-Wilk for N < 5000, and D'Agostino's K^2 test for N >= 5000.
         High p-value (>0.05) suggests residuals are consistent with Gaussian distribution.
         """
-        if len(weighted_residuals) >= 3:  # Minimum for Shapiro-Wilk
-            try:
+        n = len(weighted_residuals)
+        if n < 3:
+            return np.nan
+
+        try:
+            if n < 5000:
+                # Shapiro-Wilk is powerful for small to medium samples
                 _, normality_pvalue = stats.shapiro(weighted_residuals)
-                return normality_pvalue
-            except Exception as e:
-                logger.warning(f"Normality test failed: {e}")
-                return np.nan
-        else:
+            else:
+                # For large samples (N > 5000), Shapiro-Wilk p-value is inaccurate.
+                # Use D'Agostino's K^2 test which is robust for large N.
+                _, normality_pvalue = stats.normaltest(weighted_residuals)
+
+            return float(normality_pvalue)
+        except Exception as e:
+            logger.warning(f"Normality test failed: {e}")
             return np.nan
 
     def _log_quality_interpretation(self, metrics: ValidationMetrics) -> None:

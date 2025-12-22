@@ -464,7 +464,6 @@ print(f"Ensemble mean χ²/M = {np.mean([r.validation_metrics.chi_squared_per_ob
 
 ### Key Functions
 
-- **reconstruct_sed_from_csv()**: Convenience function for one-line reconstruction
 - **export_default_sed_config()**: Export configuration template for customization
 - **apply_rolling_mad_sigma_clip_single_band()**: Rolling MAD-based outlier removal
 - **SpectralEvaluator**: Comprehensive reconstruction quality assessment with physically meaningful metrics
