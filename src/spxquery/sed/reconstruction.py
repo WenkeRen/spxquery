@@ -365,36 +365,3 @@ class SEDReconstructor:
         """
         # Use the internal decision method
         return self._run_reconstruction_with_path(band_data_dict, metadata)
-
-
-def reconstruct_sed_from_csv(
-    csv_path: Path,
-    config: Optional[SEDConfig] = None,
-    metadata: Optional[Dict[str, any]] = None,
-) -> Union[SEDReconstructionResult, EnsembleResult]:
-    """
-    Convenience function for one-line SED reconstruction.
-
-    Automatically determines whether to run ensemble or single reconstruction
-    based on the config.ensemble_size parameter.
-
-    Parameters
-    ----------
-    csv_path : Path
-        Path to CSV file with SPHEREx photometry.
-    config : Optional[SEDConfig]
-        Configuration for reconstruction. If None, uses defaults.
-    metadata : Optional[Dict[str, any]]
-        Additional metadata to include in results.
-
-    Returns
-    -------
-    SEDReconstructionResult | EnsembleResult
-        Complete reconstruction result. Returns EnsembleResult if config.ensemble_size > 1,
-        otherwise returns SEDReconstructionResult.
-    """
-    if config is None:
-        config = SEDConfig()
-
-    reconstructor = SEDReconstructor(config)
-    return reconstructor.reconstruct_from_csv(csv_path, metadata)

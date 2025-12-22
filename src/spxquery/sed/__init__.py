@@ -23,7 +23,6 @@ ValidationMetrics : Quality assessment metrics
 
 Main Functions
 --------------
-reconstruct_sed_from_csv : Convenience function for one-line reconstruction
 export_default_sed_config : Export configuration template for customization
 
 Examples
@@ -47,10 +46,6 @@ With custom Deep Image Prior architecture:
 >>> reconstructor = SEDReconstructor(config)
 >>> result = reconstructor.reconstruct_from_csv("lightcurve.csv")
 
-One-line convenience function:
-
->>> from spxquery.sed import reconstruct_sed_from_csv
->>> result = reconstruct_sed_from_csv("lightcurve.csv")
 """
 
 # Version
@@ -63,7 +58,6 @@ from .config import SEDConfig, export_default_sed_config
 from .reconstruction import (
     SEDReconstructor,
     SEDReconstructionResult,
-    reconstruct_sed_from_csv,
 )
 
 # Data structures
@@ -80,8 +74,6 @@ __all__ = [
     # Main classes
     "SEDReconstructor",
     "SEDReconstructionResult",
-    # Convenience function
-    "reconstruct_sed_from_csv",
     # Data structures
     "BandData",
     "ValidationMetrics",

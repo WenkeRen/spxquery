@@ -26,9 +26,7 @@ from .background import estimate_local_background
 logger = logging.getLogger(__name__)
 
 
-def repair_variance_for_flagged_pixels(
-    variance: np.ndarray, flags: np.ndarray
-) -> np.ndarray:
+def repair_variance_for_flagged_pixels(variance: np.ndarray, flags: np.ndarray) -> np.ndarray:
     """
     Repair NaN variance values for pixels with non-zero flags.
 
@@ -76,8 +74,7 @@ def repair_variance_for_flagged_pixels(
         # Unexpected: NaN variance without flags
         n_bad = nan_with_zero_flags.sum()
         logger.error(
-            f"Found {n_bad} pixels with NaN variance but zero flags. "
-            f"This indicates unexpected data quality issues."
+            f"Found {n_bad} pixels with NaN variance but zero flags. This indicates unexpected data quality issues."
         )
         raise ValueError(
             f"Found {n_bad} pixels with NaN variance but zero flags. "
@@ -358,7 +355,7 @@ def extract_source_photometry(
 
     try:
         # Read MEF with unit conversion to uJy/arcsec2 for simpler flux calculations
-        mef = read_spherex_mef(mef_file, target_unit='uJy/arcsec2')
+        mef = read_spherex_mef(mef_file, target_unit="uJy/arcsec2")
 
         # Repair variance for flagged pixels with NaN values
         # This validates that NaN variance correlates with flags and provides median estimate
@@ -384,7 +381,7 @@ def extract_source_photometry(
                 final_aperture_radius = aperture_diameter / 2.0
 
                 logger.info(
-                    f"FWHM-based aperture: FWHM={fwhm_arcsec:.3f}\" ({fwhm_pixels:.2f}px) "
+                    f'FWHM-based aperture: FWHM={fwhm_arcsec:.3f}" ({fwhm_pixels:.2f}px) '
                     f"→ diameter={aperture_diameter:.2f}px (radius={final_aperture_radius:.2f}px)"
                 )
 
@@ -470,7 +467,7 @@ def extract_source_photometry(
         # The aperture photometry returns a sum: Σ(surface_brightness_i) across pixels
         # To convert to flux: multiply by pixel area in arcsec2
         pixel_scale_arcsec = get_pixel_scale_at_position(mef.spatial_wcs, x, y, photometry_config.pixel_scale_fallback)
-        pixel_area_arcsec2 = pixel_scale_arcsec ** 2  # Area of one pixel in arcsec2
+        pixel_area_arcsec2 = pixel_scale_arcsec**2  # Area of one pixel in arcsec2
 
         # Convert: (uJy/arcsec2 × pixels) × (arcsec2/pixel) = uJy
         flux_ujy = flux_sum_uJy_per_arcsec2 * pixel_area_arcsec2
@@ -584,10 +581,7 @@ def process_all_observations(
     logger.info(f"Processing photometry for {len(file_paths)} observations")
 
     # Prepare arguments for processing
-    args_list = [
-        (filepath, source, photometry_config)
-        for filepath in file_paths
-    ]
+    args_list = [(filepath, source, photometry_config) for filepath in file_paths]
 
     results = []
 
