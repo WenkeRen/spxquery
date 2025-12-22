@@ -9,7 +9,7 @@ and validation for unified spectral reconstruction across all SPHEREx detector b
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Union
 
 import numpy as np
 import scipy.sparse as sp
@@ -19,7 +19,7 @@ from .data_loader import BandData, load_all_bands
 from .data_structures import EnsembleResult, SEDReconstructionResult
 from .matrices import build_global_observation_data
 from .solver_torch import solve_global_reconstruction
-from .validation import assess_reconstruction_quality
+from .validation import SpectralEvaluator
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,8 @@ class SEDReconstructor:
             (global_dataset.H_values.cpu().numpy(), global_dataset.H_indices.cpu().numpy()),
             shape=global_dataset.H_shape,
         )
-        validation_metrics = assess_reconstruction_quality(
+        evaluator = SpectralEvaluator()
+        validation_metrics = evaluator.assess_reconstruction_quality(
             global_dataset.observations.cpu().numpy(),
             H_sparse,
             result_spectrum.cpu().numpy(),
@@ -158,7 +159,7 @@ class SEDReconstructor:
 
         logger.info(
             f"Reconstruction complete: {solver_status} in {solver_time:.2f}s, "
-            f"χ²_ν = {validation_metrics.chi_squared_reduced:.3f}"
+            f"chi^2/M = {validation_metrics.chi_squared_per_obs:.3f}"
         )
 
         return result
@@ -248,8 +249,8 @@ class SEDReconstructor:
 
         logger.info(
             f"Ensemble reconstruction complete: {self.config.ensemble_size} members, "
-            f"mean χ²_ν = {np.mean([r.validation_metrics.chi_squared_reduced for r in member_results]):.3f} "
-            f"± {np.std([r.validation_metrics.chi_squared_reduced for r in member_results]):.3f}"
+            f"mean chi^2/M = {np.mean([r.validation_metrics.chi_squared_per_obs for r in member_results]):.3f} "
+            f"+- {np.std([r.validation_metrics.chi_squared_per_obs for r in member_results]):.3f}"
         )
 
         return ensemble_result
@@ -290,7 +291,7 @@ class SEDReconstructor:
         self,
         csv_path: Path,
         metadata: Optional[Dict[str, any]] = None,
-    ) -> SEDReconstructionResult | EnsembleResult:
+    ) -> Union[SEDReconstructionResult, EnsembleResult]:
         """
         Reconstruct SED from CSV file containing SPHEREx photometry.
 
@@ -326,7 +327,7 @@ class SEDReconstructor:
         band_data_dict: Dict[str, BandData],
         metadata: Optional[Dict[str, any]],
         csv_path: Optional[Path] = None,
-    ) -> SEDReconstructionResult | EnsembleResult:
+    ) -> Union[SEDReconstructionResult, EnsembleResult]:
         """
         Internal method that decides between ensemble/single reconstruction with path support.
         """
@@ -342,7 +343,7 @@ class SEDReconstructor:
         self,
         band_data_dict: Dict[str, BandData],
         metadata: Optional[Dict[str, any]] = None,
-    ) -> SEDReconstructionResult | EnsembleResult:
+    ) -> Union[SEDReconstructionResult, EnsembleResult]:
         """
         Reconstruct SED from pre-loaded BandData objects.
 
@@ -370,7 +371,7 @@ def reconstruct_sed_from_csv(
     csv_path: Path,
     config: Optional[SEDConfig] = None,
     metadata: Optional[Dict[str, any]] = None,
-) -> SEDReconstructionResult | EnsembleResult:
+) -> Union[SEDReconstructionResult, EnsembleResult]:
     """
     Convenience function for one-line SED reconstruction.
 

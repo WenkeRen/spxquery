@@ -110,7 +110,7 @@ def plot_reconstructed_spectrum(
     ax.set_title(
         f"Global SED Reconstruction\n"
         f"DIP: {result.config.dip_filters} filters, {result.config.dip_depth} layers, "
-        f"$\\chi^2_\\nu$={result.validation_metrics.chi2_nu:.3f}",
+        f"$\\chi^2/M$={result.validation_metrics.chi_squared_per_obs:.3f}",
         fontsize=11,
     )
     ax.legend(loc="best", fontsize=10)
@@ -325,7 +325,12 @@ def plot_diagnostic_summary(
 
     metrics_text = f"""Quality Metrics:
 
-$\\chi^2_\\nu$ = {result.validation_metrics.chi2_nu:.3f}
+$\\chi^2/M\\$ = {result.validation_metrics.chi_squared_per_obs:.3f}
+Negative flux: {result.validation_metrics.negative_flux_fraction:.1%}
+Smoothness TV: {result.validation_metrics.smoothness_tv:.2f}
+RMS resid: {result.validation_metrics.residual_rms:.3f}
+Oscillation p: {result.validation_metrics.residual_oscillation:.3f}
+
 Solver: {result.solver_status}
 Time: {result.solver_time:.2f} s
 

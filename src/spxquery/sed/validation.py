@@ -7,7 +7,7 @@ residual analysis, chi-squared statistics, and goodness-of-fit metrics.
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, Tuple
+
 import numpy as np
 import scipy.sparse as sp
 from scipy import stats
@@ -24,10 +24,13 @@ class ValidationMetrics:
     ----------
     chi_squared : float
         Sum of squared weighted residuals.
-    chi_squared_reduced : float
-        Chi-squared divided by degrees of freedom.
-    degrees_of_freedom : int
-        Number of measurements minus number of parameters (M - N).
+    chi_squared_per_obs : float
+        Chi-squared per observation (chi^2 / M). Average weighted residual squared per observation.
+        Ideal: ~= 1.0, > 2.0: Poor fit or underestimated errors, < 0.5: Overfitting or overestimated errors.
+    n_obs : int
+        Number of observations (M).
+    n_sample : int
+        Number of spectral samples/parameters (N).
     residuals : np.ndarray
         Raw residuals (y - H @ x), shape (M,).
     weighted_residuals : np.ndarray
@@ -45,11 +48,23 @@ class ValidationMetrics:
     normality_pvalue : float
         P-value from Shapiro-Wilk test on weighted residuals.
         High p-value (>0.05) suggests Gaussian residuals.
+    negative_flux_fraction : float
+        Fraction of spectral bins with negative flux.
+        Ideal: 0.0 (physical spectra must be non-negative), Warning: > 5%.
+    smoothness_tv : float
+        Normalized Total Variation of the spectrum. Measures spectral roughness/oscillation.
+        Lower values indicate smoother spectra (preferred for continuum).
+    residual_oscillation : float
+        von Neumann Ratio test p-value on weighted residuals for oscillation detection.
+        p < 0.05 indicates significant oscillation exists.
+    residual_rms : float
+        Root Mean Square of weighted residuals. Expected to be close to 1.0.
     """
 
     chi_squared: float
-    chi_squared_reduced: float
-    degrees_of_freedom: int
+    chi_squared_per_obs: float
+    n_obs: int
+    n_sample: int
     residuals: np.ndarray
     weighted_residuals: np.ndarray
     residual_mean: float
@@ -58,301 +73,262 @@ class ValidationMetrics:
     weighted_residual_std: float
     max_residual: float
     normality_pvalue: float
+    negative_flux_fraction: float
+    smoothness_tv: float
+    residual_oscillation: float
+    residual_rms: float
 
 
-def compute_residuals(y: np.ndarray, H: sp.csr_matrix, spectrum: np.ndarray) -> np.ndarray:
+class SpectralEvaluator:
     """
-    Compute raw residuals between observations and model.
+    Comprehensive evaluator for SED reconstruction quality assessment.
 
-    Residuals are: r = y - H @ x
-
-    Parameters
-    ----------
-    y : np.ndarray
-        Observed flux measurements, shape (M,).
-    H : sp.csr_matrix
-        Measurement matrix, shape (M, N).
-    spectrum : np.ndarray
-        Reconstructed spectrum, shape (N,).
-
-    Returns
-    -------
-    np.ndarray
-        Residuals, shape (M,).
+    This class provides statistically valid and physically meaningful metrics
+    for Deep Image Prior reconstruction, including chi-squared statistics,
+    physicality checks, smoothness metrics, and oscillation detection.
     """
-    y_model = H @ spectrum
-    residuals = y - y_model
-    return residuals
 
+    def assess_reconstruction_quality(
+        self,
+        y: np.ndarray,
+        H: sp.csr_matrix,
+        spectrum: np.ndarray,
+        weights: np.ndarray,
+    ) -> ValidationMetrics:
+        """
+        Compute comprehensive quality metrics for reconstructed spectrum.
 
-def compute_weighted_residuals(residuals: np.ndarray, weights: np.ndarray) -> np.ndarray:
-    """
-    Compute weighted residuals.
+        Parameters
+        ----------
+        y : np.ndarray
+            Observed flux measurements, shape (M,).
+        H : sp.csr_matrix
+            Measurement matrix, shape (M, N).
+        spectrum : np.ndarray
+            Reconstructed spectrum, shape (N,).
+        weights : np.ndarray
+            Measurement weights, shape (M,).
 
-    Weighted residuals are: r_weighted = w * r = w * (y - H @ x)
+        Returns
+        -------
+        ValidationMetrics
+            Container with all quality metrics.
+        """
+        n_obs, n_sample = H.shape
 
-    If weights are w = 1/sigma, then weighted residuals should be
-    approximately standard normal distributed N(0, 1) if the model is correct.
+        # Compute residuals
+        residuals = self._compute_residuals(y, H, spectrum)
+        weighted_residuals = self._compute_weighted_residuals(residuals, weights)
 
-    Parameters
-    ----------
-    residuals : np.ndarray
-        Raw residuals, shape (M,).
-    weights : np.ndarray
-        Measurement weights (1/sigma), shape (M,).
+        # Chi-squared statistics
+        chi_squared, chi_squared_per_obs = self._compute_chi_squared_statistics(weighted_residuals, n_obs)
 
-    Returns
-    -------
-    np.ndarray
-        Weighted residuals, shape (M,).
-    """
-    weighted_residuals = weights * residuals
-    return weighted_residuals
+        # Physicality metrics
+        negative_flux_fraction = self._compute_negative_flux_fraction(spectrum)
 
+        # Smoothness metrics
+        smoothness_tv = self._compute_smoothness_tv(spectrum)
 
-def compute_chi_squared(weighted_residuals: np.ndarray) -> float:
-    """
-    Compute chi-squared statistic.
+        # Residual oscillation detection
+        residual_oscillation = self._compute_residual_oscillation(weighted_residuals)
 
-    Chi-squared is the sum of squared weighted residuals:
-        chi^2 = sum((y - H @ x)^2 / sigma^2)
+        # RMS of weighted residuals
+        residual_rms = self._compute_residual_rms(weighted_residuals)
 
-    Parameters
-    ----------
-    weighted_residuals : np.ndarray
-        Weighted residuals, shape (M,).
+        # Basic residual statistics
+        residual_mean = np.mean(residuals)
+        residual_std = np.std(residuals)
+        weighted_residual_mean = np.mean(weighted_residuals)
+        weighted_residual_std = np.std(weighted_residuals)
+        max_residual = np.max(np.abs(residuals))
 
-    Returns
-    -------
-    float
-        Chi-squared value.
-    """
-    chi_squared = np.sum(weighted_residuals**2)
-    return chi_squared
+        # Normality test on weighted residuals
+        normality_pvalue = self._compute_normality_test(weighted_residuals)
 
-
-def compute_reduced_chi_squared(chi_squared: float, n_measurements: int, n_parameters: int) -> float:
-    """
-    Compute reduced chi-squared (chi^2 / dof).
-
-    Degrees of freedom (dof) = M - N, where M is number of measurements
-    and N is number of parameters (wavelength bins in reconstructed spectrum).
-
-    A reduced chi-squared close to 1.0 indicates a good fit with appropriate
-    error estimates. Values >> 1 suggest poor fit or underestimated errors.
-    Values << 1 suggest overfitting or overestimated errors.
-
-    Parameters
-    ----------
-    chi_squared : float
-        Chi-squared value.
-    n_measurements : int
-        Number of measurements M.
-    n_parameters : int
-        Number of parameters N (wavelength bins).
-
-    Returns
-    -------
-    float
-        Reduced chi-squared.
-    """
-    dof = n_measurements - n_parameters
-    if dof <= 0:
-        logger.warning(
-            f"Degrees of freedom <= 0 (M={n_measurements}, N={n_parameters}). Cannot compute reduced chi-squared."
+        # Create validation metrics
+        metrics = ValidationMetrics(
+            chi_squared=chi_squared,
+            chi_squared_per_obs=chi_squared_per_obs,
+            n_obs=n_obs,
+            n_sample=n_sample,
+            residuals=residuals,
+            weighted_residuals=weighted_residuals,
+            residual_mean=residual_mean,
+            residual_std=residual_std,
+            weighted_residual_mean=weighted_residual_mean,
+            weighted_residual_std=weighted_residual_std,
+            max_residual=max_residual,
+            normality_pvalue=normality_pvalue,
+            negative_flux_fraction=negative_flux_fraction,
+            smoothness_tv=smoothness_tv,
+            residual_oscillation=residual_oscillation,
+            residual_rms=residual_rms,
         )
-        return np.nan
 
-    reduced_chi_squared = chi_squared / dof
-    return reduced_chi_squared
+        # Log interpretation
+        self._log_quality_interpretation(metrics)
 
+        return metrics
 
-def assess_reconstruction_quality(
-    y: np.ndarray,
-    H: sp.csr_matrix,
-    spectrum: np.ndarray,
-    weights: np.ndarray,
-) -> ValidationMetrics:
-    """
-    Compute comprehensive quality metrics for reconstructed spectrum.
+    def _compute_residuals(self, y: np.ndarray, H: sp.csr_matrix, spectrum: np.ndarray) -> np.ndarray:
+        """Compute raw residuals between observations and model."""
+        y_model = H @ spectrum
+        return y - y_model
 
-    This function computes:
-    - Raw and weighted residuals
-    - Chi-squared and reduced chi-squared
-    - Residual statistics (mean, std, max)
-    - Normality test on weighted residuals
+    def _compute_weighted_residuals(self, residuals: np.ndarray, weights: np.ndarray) -> np.ndarray:
+        """Compute weighted residuals."""
+        return weights * residuals
 
-    Parameters
-    ----------
-    y : np.ndarray
-        Observed flux measurements, shape (M,).
-    H : sp.csr_matrix
-        Measurement matrix, shape (M, N).
-    spectrum : np.ndarray
-        Reconstructed spectrum, shape (N,).
-    weights : np.ndarray
-        Measurement weights, shape (M,).
+    def _compute_chi_squared_statistics(self, weighted_residuals: np.ndarray, n_obs: int) -> tuple[float, float]:
+        """
+        Compute chi-squared and chi-squared per observation.
 
-    Returns
-    -------
-    ValidationMetrics
-        Container with all quality metrics.
-    """
-    M, N = H.shape
+        chi_squared_per_obs = chi^2 / M (average weighted residual squared per observation)
+        """
+        chi_squared = np.sum(weighted_residuals**2)
+        chi_squared_per_obs = chi_squared / n_obs
+        return chi_squared, chi_squared_per_obs
 
-    # Compute residuals
-    residuals = compute_residuals(y, H, spectrum)
-    weighted_residuals = compute_weighted_residuals(residuals, weights)
+    def _compute_negative_flux_fraction(self, spectrum: np.ndarray) -> float:
+        """
+        Compute fraction of spectral bins with negative flux.
 
-    # Chi-squared statistics
-    chi_squared = compute_chi_squared(weighted_residuals)
-    chi_squared_reduced = compute_reduced_chi_squared(chi_squared, M, N)
-    dof = M - N
+        Physical spectra must be non-negative. Values > 0.05 (5%) indicate problematic reconstruction.
+        """
+        negative_count = np.sum(spectrum < 0)
+        return negative_count / len(spectrum)
 
-    # Residual statistics
-    residual_mean = np.mean(residuals)
-    residual_std = np.std(residuals)
-    weighted_residual_mean = np.mean(weighted_residuals)
-    weighted_residual_std = np.std(weighted_residuals)
-    max_residual = np.max(np.abs(residuals))
+    def _compute_smoothness_tv(self, spectrum: np.ndarray) -> float:
+        """
+        Compute normalized Total Variation of the spectrum.
 
-    # Normality test on weighted residuals
-    # Shapiro-Wilk test: null hypothesis is that data is normally distributed
-    # High p-value (>0.05) suggests residuals are consistent with Gaussian
-    if len(weighted_residuals) >= 3:  # Minimum for Shapiro-Wilk
-        try:
-            _, normality_pvalue = stats.shapiro(weighted_residuals)
-        except Exception as e:
-            logger.warning(f"Normality test failed: {e}")
-            normality_pvalue = np.nan
-    else:
-        normality_pvalue = np.nan
+        TV measures spectral roughness/oscillation. Lower values indicate smoother spectra.
+        TV = sum(|spectrum[i+1] - spectrum[i]|) for i = 0 to N-2
+        """
+        if len(spectrum) < 2:
+            return 0.0
 
-    # Package metrics
-    metrics = ValidationMetrics(
-        chi_squared=chi_squared,
-        chi_squared_reduced=chi_squared_reduced,
-        degrees_of_freedom=dof,
-        residuals=residuals,
-        weighted_residuals=weighted_residuals,
-        residual_mean=residual_mean,
-        residual_std=residual_std,
-        weighted_residual_mean=weighted_residual_mean,
-        weighted_residual_std=weighted_residual_std,
-        max_residual=max_residual,
-        normality_pvalue=normality_pvalue,
-    )
+        tv = np.sum(np.abs(np.diff(spectrum)))
+        # Normalize by the spectrum range to make it scale-independent
+        spectrum_range = np.ptp(spectrum)  # peak-to-peak range
+        if spectrum_range > 0:
+            return tv / spectrum_range
+        else:
+            return 0.0
 
-    # Log summary
-    logger.info("Reconstruction quality metrics:")
-    logger.info(f"  Chi-squared: {chi_squared:.2f} (dof={dof})")
-    logger.info(f"  Reduced chi-squared: {chi_squared_reduced:.3f}")
-    logger.info(f"  Weighted residuals: mean={weighted_residual_mean:.3f}, std={weighted_residual_std:.3f}")
-    logger.info(
-        f"  Normality p-value: {normality_pvalue:.3f}" if not np.isnan(normality_pvalue) else "  Normality p-value: N/A"
-    )
+    def _compute_residual_oscillation(self, weighted_residuals: np.ndarray) -> float:
+        """
+        Compute von Neumann Ratio test p-value on weighted residuals.
 
-    # Interpret reduced chi-squared
-    if 0.5 <= chi_squared_reduced <= 2.0:
-        logger.info("  -> Good fit (reduced chi-squared near 1)")
-    elif chi_squared_reduced > 2.0:
-        logger.warning("  -> Poor fit or underestimated errors (reduced chi-squared >> 1)")
-    else:
-        logger.warning("  -> Possible overfitting or overestimated errors (reduced chi-squared << 1)")
+        Tests for systematic oscillation in residuals using Mean Square Successive Difference.
 
-    return metrics
+        Statistic: M = sum((r_{i+1} - r_i)^2) / sum((r_i - mean(r))^2)
+        Expected value: mu_M ~= 2, Standard deviation: sigma_M ~= sqrt(4/N)
 
+        Returns p-value for oscillation detection. p < 0.05 indicates significant oscillation.
+        """
+        if len(weighted_residuals) < 3:
+            return np.nan
 
-def split_train_validation(
-    y: np.ndarray,
-    H: sp.csr_matrix,
-    weights: np.ndarray,
-    validation_fraction: float,
-    random_seed: int = 42,
-) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
-    """
-    Split data into training and validation sets for hyperparameter tuning.
+        residuals = weighted_residuals
+        n = len(residuals)
+        r_mean = np.mean(residuals)
 
-    Parameters
-    ----------
-    y : np.ndarray
-        Observed flux measurements, shape (M,).
-    H : sp.csr_matrix
-        Measurement matrix, shape (M, N).
-    weights : np.ndarray
-        Measurement weights, shape (M,).
-    validation_fraction : float
-        Fraction of data to reserve for validation (e.g., 0.2 for 80/20 split).
-    random_seed : int
-        Random seed for reproducibility.
+        # von Neumann Ratio statistic
+        numerator = np.sum(np.diff(residuals) ** 2)  # sum((r_{i+1} - r_i)^2)
+        denominator = np.sum((residuals - r_mean) ** 2)  # sum((r_i - mean(r))^2)
 
-    Returns
-    -------
-    train_data : Dict[str, np.ndarray]
-        Dictionary with keys 'y', 'H', 'weights' for training set.
-    val_data : Dict[str, np.ndarray]
-        Dictionary with keys 'y', 'H', 'weights' for validation set.
-    """
-    M = len(y)
-    n_val = int(M * validation_fraction)
-    n_train = M - n_val
+        if denominator == 0:
+            return np.nan
 
-    # Generate random indices
-    rng = np.random.RandomState(random_seed)
-    indices = rng.permutation(M)
-    train_indices = indices[:n_train]
-    val_indices = indices[n_train:]
+        m_statistic = numerator / denominator
 
-    # Split data
-    train_data = {
-        "y": y[train_indices],
-        "H": H[train_indices, :],
-        "weights": weights[train_indices],
-    }
+        # Expected value and standard deviation under null hypothesis
+        expected_m = 2.0
+        std_m = np.sqrt(4.0 / n)
 
-    val_data = {
-        "y": y[val_indices],
-        "H": H[val_indices, :],
-        "weights": weights[val_indices],
-    }
+        if std_m == 0:
+            return np.nan
 
-    logger.info(
-        f"Split data: {n_train} training ({100 * (1 - validation_fraction):.0f}%), "
-        f"{n_val} validation ({100 * validation_fraction:.0f}%)"
-    )
+        # Z-score (negative if smooth oscillation exists)
+        z_score = (m_statistic - expected_m) / std_m
 
-    return train_data, val_data
+        # Two-tailed p-value using standard normal CDF
+        p_value = stats.norm.cdf(z_score)
 
+        return p_value
 
-def compute_validation_error(
-    y_val: np.ndarray,
-    H_val: sp.csr_matrix,
-    weights_val: np.ndarray,
-    spectrum: np.ndarray,
-) -> float:
-    """
-    Compute validation error (weighted RMSE) for a reconstructed spectrum.
+    def _compute_residual_rms(self, weighted_residuals: np.ndarray) -> float:
+        """
+        Compute Root Mean Square of weighted residuals.
 
-    Validation error is the root mean squared weighted residual:
-        error = sqrt(mean((w * (y - H @ x))^2))
+        Expected to be close to 1.0 if weights are properly calibrated.
+        """
+        return np.sqrt(np.mean(weighted_residuals**2))
 
-    Parameters
-    ----------
-    y_val : np.ndarray
-        Validation flux measurements, shape (M_val,).
-    H_val : sp.csr_matrix
-        Validation measurement matrix, shape (M_val, N).
-    weights_val : np.ndarray
-        Validation weights, shape (M_val,).
-    spectrum : np.ndarray
-        Reconstructed spectrum, shape (N,).
+    def _compute_normality_test(self, weighted_residuals: np.ndarray) -> float:
+        """
+        Compute Shapiro-Wilk normality test p-value on weighted residuals.
 
-    Returns
-    -------
-    float
-        Validation error (weighted RMSE).
-    """
-    residuals = compute_residuals(y_val, H_val, spectrum)
-    weighted_residuals = compute_weighted_residuals(residuals, weights_val)
-    error = np.sqrt(np.mean(weighted_residuals**2))
-    return error
+        High p-value (>0.05) suggests residuals are consistent with Gaussian distribution.
+        """
+        if len(weighted_residuals) >= 3:  # Minimum for Shapiro-Wilk
+            try:
+                _, normality_pvalue = stats.shapiro(weighted_residuals)
+                return normality_pvalue
+            except Exception as e:
+                logger.warning(f"Normality test failed: {e}")
+                return np.nan
+        else:
+            return np.nan
+
+    def _log_quality_interpretation(self, metrics: ValidationMetrics) -> None:
+        """Log interpretation of quality metrics."""
+        logger.info("SED Reconstruction Quality Assessment:")
+        logger.info(f"  Observations: {metrics.n_obs}, Spectral samples: {metrics.n_sample}")
+        logger.info(f"  chi^2 = {metrics.chi_squared:.2f}, chi^2/M = {metrics.chi_squared_per_obs:.3f}")
+        logger.info(
+            f"  Weighted residuals: mean = {metrics.weighted_residual_mean:.3f}, "
+            f"std = {metrics.weighted_residual_std:.3f}"
+        )
+        logger.info(f"  RMS weighted residuals: {metrics.residual_rms:.3f}")
+
+        # Physicality assessment
+        logger.info(f"  Negative flux fraction: {metrics.negative_flux_fraction:.1%}")
+        if metrics.negative_flux_fraction == 0.0:
+            logger.info("  -> Physical spectrum: no negative flux values")
+        elif metrics.negative_flux_fraction > 0.05:
+            logger.warning(
+                f"  -> Unphysical spectrum: {metrics.negative_flux_fraction:.1%} negative flux (>5% threshold)"
+            )
+        else:
+            logger.info(f"  -> Minor unphysical values: {metrics.negative_flux_fraction:.1%} negative flux")
+
+        # Oscillation detection
+        if not np.isnan(metrics.residual_oscillation):
+            logger.info(f"  Residual oscillation test: p = {metrics.residual_oscillation:.3f}")
+            if metrics.residual_oscillation < 0.05:
+                logger.warning("  -> Significant residual oscillation detected (p < 0.05)")
+            else:
+                logger.info("  -> No significant residual oscillation")
+        else:
+            logger.info("  Residual oscillation test: N/A")
+
+        # Normality test
+        if not np.isnan(metrics.normality_pvalue):
+            logger.info(f"  Normality test: p = {metrics.normality_pvalue:.3f}")
+            if metrics.normality_pvalue > 0.05:
+                logger.info("  -> Residuals consistent with Gaussian distribution")
+            else:
+                logger.warning("  -> Residuals deviate from Gaussian distribution")
+        else:
+            logger.info("  Normality test: N/A")
+
+        # Chi-squared interpretation
+        chi2_per_obs = metrics.chi_squared_per_obs
+        if 0.5 <= chi2_per_obs <= 2.0:
+            logger.info("  -> Good fit (chi^2/M near 1.0)")
+        elif chi2_per_obs > 2.0:
+            logger.warning("  -> Poor fit or underestimated errors (chi^2/M >> 1.0)")
+        else:
+            logger.warning("  -> Possible overfitting or overestimated errors (chi^2/M << 1.0)")
