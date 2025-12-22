@@ -19,6 +19,38 @@ from .regularization import GaussianCWT
 logger = logging.getLogger(__name__)
 
 
+def set_random_seed(seed: int):
+    """
+    Set random seeds for reproducible ensemble generation.
+
+    Parameters
+    ----------
+    seed : int
+        Random seed to use for all random number generators.
+    """
+    logger.debug(f"Setting random seed to {seed}")
+
+    # Set Python random seed
+    import random
+
+    random.seed(seed)
+
+    # Set NumPy random seed
+    np.random.seed(seed)
+
+    # Set PyTorch random seed
+    torch.manual_seed(seed)
+
+    # Set PyTorch CUDA random seed if available
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+    # Ensure deterministic behavior (may impact performance)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 def create_learning_rate_scheduler(optimizer, config: SEDConfig):
     """
     Create a learning rate scheduler based on configuration.
@@ -506,6 +538,10 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
         - solver_status: str, status message
         - solver_time: float, computation time in seconds
     """
+    # Set random seed for reproducible ensemble generation
+    if config.ensemble_random_seed is not None:
+        set_random_seed(config.ensemble_random_seed)
+
     device = torch.device(config.device if torch.backends.mps.is_available() or torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
@@ -600,19 +636,19 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
                 import json
 
                 # Save initial model state
-                model_artifact = wandb.Artifact('model_initial', type='model')
-                with model_artifact.new_file('model_initial.pth', mode='wb') as f:
+                model_artifact = wandb.Artifact("model_initial", type="model")
+                with model_artifact.new_file("model_initial.pth", mode="wb") as f:
                     torch.save(model.state_dict(), f)
-                config.wandb_run.log_artifact(model_artifact, aliases=['initial'])
+                config.wandb_run.log_artifact(model_artifact, aliases=["initial"])
 
                 # Save input static noise
-                noise_artifact = wandb.Artifact('input_static_noise', type='noise')
+                noise_artifact = wandb.Artifact("input_static_noise", type="noise")
                 noise_data = {
-                    'z_static': model.z_static.detach().cpu().numpy().tolist(),
-                    'noise_std': config.dip_noise_std,
-                    'n_pixels': model.n_pixels,
+                    "z_static": model.z_static.detach().cpu().numpy().tolist(),
+                    "noise_std": config.dip_noise_std,
+                    "n_pixels": model.n_pixels,
                 }
-                with noise_artifact.new_file('static_noise.json', mode='w') as f:
+                with noise_artifact.new_file("static_noise.json", mode="w") as f:
                     json.dump(noise_data, f)
                 config.wandb_run.log_artifact(noise_artifact)
 
@@ -885,10 +921,10 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
                 import wandb
 
                 # Save final model state
-                final_model_artifact = wandb.Artifact('model_final', type='model')
-                with final_model_artifact.new_file('model_final.pth', mode='wb') as f:
+                final_model_artifact = wandb.Artifact("model_final", type="model")
+                with final_model_artifact.new_file("model_final.pth", mode="wb") as f:
                     torch.save(model.state_dict(), f)
-                config.wandb_run.log_artifact(final_model_artifact, aliases=['final'])
+                config.wandb_run.log_artifact(final_model_artifact, aliases=["final"])
 
             # Log final spectrum data if enabled
             if config.wandb_save_raw_data:

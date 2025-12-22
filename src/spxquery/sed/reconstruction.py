@@ -7,98 +7,21 @@ and validation for unified spectral reconstruction across all SPHEREx detector b
 """
 
 import logging
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
 import numpy as np
-import pandas as pd
 import scipy.sparse as sp
-import yaml
 
 from .config import SEDConfig
 from .data_loader import BandData, load_all_bands
+from .data_structures import EnsembleResult, SEDReconstructionResult
 from .matrices import build_global_observation_data
 from .solver_torch import solve_global_reconstruction
-from .validation import ValidationMetrics, assess_reconstruction_quality
+from .validation import assess_reconstruction_quality
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class SEDReconstructionResult:
-    """
-    Complete reconstruction result for global SED reconstruction.
-
-    Attributes
-    ----------
-    wavelength : np.ndarray
-        Global wavelength grid in microns.
-    flux : np.ndarray
-        Reconstructed flux density in microJansky.
-    config : SEDConfig
-        Configuration used for reconstruction.
-    solver_status : str
-        PyTorch solver status.
-    solver_time : float
-        Solver time in seconds.
-    validation_metrics : ValidationMetrics
-        Quality assessment metrics.
-    metadata : dict
-        Reconstruction metadata including timestamps and parameters.
-    band_data : Dict[str, BandData]
-        Input photometry data per band.
-    """
-
-    wavelength: np.ndarray
-    flux: np.ndarray
-    config: SEDConfig
-    solver_status: str
-    solver_time: float
-    validation_metrics: ValidationMetrics
-    metadata: Dict[str, any]
-    band_data: Dict[str, BandData]
-
-    def save_all(self, output_dir: Path) -> None:
-        """
-        Save reconstruction results to files.
-
-        Parameters
-        ----------
-        output_dir : Path
-            Directory to save results.
-        """
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Save reconstructed spectrum
-        spectrum_df = pd.DataFrame(
-            {
-                "wavelength_microns": self.wavelength,
-                "flux_microjansky": self.flux,
-            }
-        )
-        spectrum_path = output_dir / "sed_reconstruction.csv"
-        spectrum_df.to_csv(spectrum_path, index=False)
-        logger.info(f"Saved reconstructed spectrum to {spectrum_path}")
-
-        # Save metadata
-        metadata_path = output_dir / "sed_metadata.yaml"
-        with open(metadata_path, "w") as f:
-            yaml.dump(self.metadata, f, default_flow_style=False, sort_keys=False)
-        logger.info(f"Saved reconstruction metadata to {metadata_path}")
-
-    def to_dict(self) -> Dict[str, any]:
-        """Convert result to dictionary for serialization."""
-        return {
-            "wavelength": self.wavelength.tolist(),
-            "flux": self.flux.tolist(),
-            "config": self.config.to_dict(),
-            "solver_status": self.solver_status,
-            "solver_time": self.solver_time,
-            "metadata": self.metadata,
-        }
 
 
 class SEDReconstructor:
@@ -122,18 +45,50 @@ class SEDReconstructor:
         self.config = config
         logger.info(f"Initialized SEDReconstructor with device='{config.device}'")
 
-    def reconstruct_from_csv(
+    def _prepare_data_from_csv(
         self,
         csv_path: Path,
-        metadata: Optional[Dict[str, any]] = None,
-    ) -> SEDReconstructionResult:
+    ) -> Dict[str, BandData]:
         """
-        Reconstruct SED from CSV file containing SPHEREx photometry.
+        Load and prepare photometry data from CSV file.
 
         Parameters
         ----------
         csv_path : Path
             Path to CSV file with photometry data.
+
+        Returns
+        -------
+        Dict[str, BandData]
+            Dictionary mapping band names to BandData objects.
+
+        Raises
+        ------
+        ValueError
+            If no valid photometry data is found in the CSV file.
+        """
+        logger.info(f"Loading photometry data from {csv_path}")
+
+        # Load photometry data
+        all_band_data, _ = load_all_bands(csv_path, self.config)
+        if not all_band_data:
+            raise ValueError("No valid photometry data found in CSV file")
+
+        logger.info(f"Loaded data for {len(all_band_data)} bands: {list(all_band_data.keys())}")
+        return all_band_data
+
+    def _run_single_reconstruction(
+        self,
+        band_data_dict: Dict[str, BandData],
+        metadata: Optional[Dict[str, any]] = None,
+    ) -> SEDReconstructionResult:
+        """
+        Internal method to perform single SED reconstruction from BandData objects.
+
+        Parameters
+        ----------
+        band_data_dict : Dict[str, BandData]
+            Dictionary mapping band names to BandData objects.
         metadata : Optional[Dict[str, any]]
             Additional metadata to include in results.
 
@@ -142,17 +97,10 @@ class SEDReconstructor:
         SEDReconstructionResult
             Complete reconstruction result.
         """
-        logger.info(f"Starting SED reconstruction from {csv_path}")
-
-        # Load photometry data
-        all_band_data, _ = load_all_bands(csv_path, self.config)
-        if not all_band_data:
-            raise ValueError("No valid photometry data found in CSV file")
-
-        logger.info(f"Loaded data for {len(all_band_data)} bands: {list(all_band_data.keys())}")
+        logger.info(f"Starting SED reconstruction from {len(band_data_dict)} bands")
 
         # Build global dataset
-        global_dataset = build_global_observation_data(all_band_data, self.config)
+        global_dataset = build_global_observation_data(band_data_dict, self.config)
 
         # Solve using PyTorch Deep Image Prior
         logger.info("Starting PyTorch Deep Image Prior optimization...")
@@ -174,7 +122,6 @@ class SEDReconstructor:
         # Create reconstruction metadata
         reconstruction_metadata = {
             "timestamp": datetime.now().isoformat(),
-            "csv_path": str(csv_path),
             "solver_type": "torch",
             "solver_status": solver_status,
             "solver_time_seconds": solver_time,
@@ -184,9 +131,9 @@ class SEDReconstructor:
             "learning_rate": self.config.learning_rate,
             "regularization_weight": self.config.regularization_weight,
             "cwt_scales": self.config.cwt_scales,
-            "n_bands": len(all_band_data),
-            "bands": list(all_band_data.keys()),
-            "total_observations": sum(band.n_measurements for band in all_band_data.values()),
+            "n_bands": len(band_data_dict),
+            "bands": list(band_data_dict.keys()),
+            "total_observations": sum(band.n_measurements for band in band_data_dict.values()),
         }
 
         # Add user-provided metadata
@@ -206,7 +153,7 @@ class SEDReconstructor:
             solver_time=solver_time,
             validation_metrics=validation_metrics,
             metadata=reconstruction_metadata,
-            band_data=all_band_data,
+            band_data=band_data_dict,
         )
 
         logger.info(
@@ -216,14 +163,219 @@ class SEDReconstructor:
 
         return result
 
+    def _run_ensemble_reconstruction(
+        self,
+        band_data_dict: Dict[str, BandData],
+        metadata: Optional[Dict[str, any]],
+        csv_path: Optional[Path] = None,
+    ) -> EnsembleResult:
+        """
+        Internal method to run ensemble reconstruction with multiple independent runs.
+
+        Parameters
+        ----------
+        band_data_dict : Dict[str, BandData]
+            Pre-loaded photometry data.
+        metadata : Optional[Dict[str, any]]
+            Additional metadata to include in results.
+        csv_path : Optional[Path]
+            Original CSV path for metadata (if available).
+
+        Returns
+        -------
+        EnsembleResult
+            Complete ensemble reconstruction result with aggregated statistics.
+        """
+        logger.info(f"Starting ensemble reconstruction with {self.config.ensemble_size} members")
+
+        # Create ensemble member configurations with different random seeds
+        ensemble_configs = self._create_ensemble_configs()
+
+        # Run ensemble members
+        member_results = []
+        ensemble_fluxes = []
+
+        for i, member_config in enumerate(ensemble_configs):
+            logger.info(f"Running ensemble member {i + 1}/{self.config.ensemble_size}")
+
+            # Create member metadata
+            member_metadata = {
+                "ensemble_member": i,
+                "ensemble_size": self.config.ensemble_size,
+                "random_seed": member_config.ensemble_random_seed,
+            }
+            if csv_path is not None:
+                member_metadata["csv_path"] = str(csv_path)
+            if metadata:
+                member_metadata.update(metadata)
+
+            # Temporarily replace config and run reconstruction
+            original_config = self.config
+            self.config = member_config
+            try:
+                member_result = self._run_single_reconstruction(band_data_dict, member_metadata)
+                member_results.append(member_result)
+                ensemble_fluxes.append(member_result.flux)
+            finally:
+                self.config = original_config
+
+        # Convert to numpy array
+        ensemble_fluxes = np.array(ensemble_fluxes)
+
+        # Create ensemble metadata
+        ensemble_metadata = {
+            "strategy": self.config.ensemble_strategy,
+            "ensemble_size": self.config.ensemble_size,
+            "random_seed_base": self.config.ensemble_random_seed,
+            "timestamp": datetime.now().isoformat(),
+        }
+        if csv_path is not None:
+            ensemble_metadata["csv_path"] = str(csv_path)
+
+        # Create ensemble result
+        ensemble_result = EnsembleResult(
+            wavelength=member_results[0].wavelength,
+            ensemble_fluxes=ensemble_fluxes,
+            config=self.config,
+            member_results=member_results,
+            ensemble_metadata=ensemble_metadata,
+            band_data=band_data_dict,
+            ensemble_size=self.config.ensemble_size,
+            mean_flux=np.mean(ensemble_fluxes, axis=0),
+            std_flux=np.std(ensemble_fluxes, axis=0, ddof=1),
+            median_flux=np.median(ensemble_fluxes, axis=0),
+        )
+
+        logger.info(
+            f"Ensemble reconstruction complete: {self.config.ensemble_size} members, "
+            f"mean χ²_ν = {np.mean([r.validation_metrics.chi_squared_reduced for r in member_results]):.3f} "
+            f"± {np.std([r.validation_metrics.chi_squared_reduced for r in member_results]):.3f}"
+        )
+
+        return ensemble_result
+
+    def _create_ensemble_configs(self) -> list[SEDConfig]:
+        """
+        Create configuration objects for each ensemble member.
+
+        Returns
+        -------
+        list[SEDConfig]
+            List of configuration objects, one for each ensemble member.
+        """
+        configs = []
+
+        for i in range(self.config.ensemble_size):
+            # Create a copy of the current config
+            member_config = self.config.copy_with_overrides(
+                ensemble_size=1,  # Each member runs as single reconstruction
+            )
+
+            # Set random seed for reproducible ensembles
+            if self.config.ensemble_random_seed is not None:
+                member_seed = self.config.ensemble_random_seed + i
+                member_config = member_config.copy_with_overrides(
+                    ensemble_random_seed=member_seed,
+                )
+
+            # Disable wandb for subsequent members to prevent conflicts (only first member logged)
+            if i > 0:
+                member_config = member_config.copy_with_overrides(wandb_run=None)
+
+            configs.append(member_config)
+
+        return configs
+
+    def reconstruct_from_csv(
+        self,
+        csv_path: Path,
+        metadata: Optional[Dict[str, any]] = None,
+    ) -> SEDReconstructionResult | EnsembleResult:
+        """
+        Reconstruct SED from CSV file containing SPHEREx photometry.
+
+        Automatically determines whether to run ensemble or single reconstruction
+        based on the config.ensemble_size parameter.
+
+        Parameters
+        ----------
+        csv_path : Path
+            Path to CSV file with photometry data.
+        metadata : Optional[Dict[str, any]]
+            Additional metadata to include in results.
+
+        Returns
+        -------
+        SEDReconstructionResult | EnsembleResult
+            Complete reconstruction result. Returns EnsembleResult if config.ensemble_size > 1,
+            otherwise returns SEDReconstructionResult.
+        """
+        # Load data from CSV
+        band_data_dict = self._prepare_data_from_csv(csv_path)
+
+        # Add CSV path to metadata
+        csv_metadata = {"csv_path": str(csv_path)}
+        if metadata:
+            csv_metadata.update(metadata)
+
+        # Reconstruct from loaded data (pass CSV path for ensemble metadata)
+        return self._run_reconstruction_with_path(band_data_dict, csv_metadata, csv_path)
+
+    def _run_reconstruction_with_path(
+        self,
+        band_data_dict: Dict[str, BandData],
+        metadata: Optional[Dict[str, any]],
+        csv_path: Optional[Path] = None,
+    ) -> SEDReconstructionResult | EnsembleResult:
+        """
+        Internal method that decides between ensemble/single reconstruction with path support.
+        """
+        # Check if ensemble reconstruction is needed
+        if self.config.ensemble_size > 1:
+            logger.info(f"Ensemble reconstruction requested with {self.config.ensemble_size} members")
+            return self._run_ensemble_reconstruction(band_data_dict, metadata, csv_path)
+        else:
+            logger.info("Single reconstruction requested")
+            return self._run_single_reconstruction(band_data_dict, metadata)
+
+    def reconstruct_from_data(
+        self,
+        band_data_dict: Dict[str, BandData],
+        metadata: Optional[Dict[str, any]] = None,
+    ) -> SEDReconstructionResult | EnsembleResult:
+        """
+        Reconstruct SED from pre-loaded BandData objects.
+
+        Automatically determines whether to run ensemble or single reconstruction
+        based on the config.ensemble_size parameter.
+
+        Parameters
+        ----------
+        band_data_dict : Dict[str, BandData]
+            Dictionary mapping band names to BandData objects.
+        metadata : Optional[Dict[str, any]]
+            Additional metadata to include in results.
+
+        Returns
+        -------
+        SEDReconstructionResult | EnsembleResult
+            Complete reconstruction result. Returns EnsembleResult if config.ensemble_size > 1,
+            otherwise returns SEDReconstructionResult.
+        """
+        # Use the internal decision method
+        return self._run_reconstruction_with_path(band_data_dict, metadata)
+
 
 def reconstruct_sed_from_csv(
     csv_path: Path,
     config: Optional[SEDConfig] = None,
     metadata: Optional[Dict[str, any]] = None,
-) -> SEDReconstructionResult:
+) -> SEDReconstructionResult | EnsembleResult:
     """
     Convenience function for one-line SED reconstruction.
+
+    Automatically determines whether to run ensemble or single reconstruction
+    based on the config.ensemble_size parameter.
 
     Parameters
     ----------
@@ -236,8 +388,9 @@ def reconstruct_sed_from_csv(
 
     Returns
     -------
-    SEDReconstructionResult
-        Complete reconstruction result.
+    SEDReconstructionResult | EnsembleResult
+        Complete reconstruction result. Returns EnsembleResult if config.ensemble_size > 1,
+        otherwise returns SEDReconstructionResult.
     """
     if config is None:
         config = SEDConfig()

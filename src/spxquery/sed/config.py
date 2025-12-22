@@ -193,6 +193,12 @@ class SEDConfig:
     ema_decay: float = 0.99  # EMA decay rate (default: 99%, trusting history more)
     ema_start_epoch: Optional[int] = None  # EMA startup epoch (None = use learning_rate_warmup_epochs)
 
+    # Ensembling parameters for improved reconstruction robustness
+    ensemble_size: int = 1  # Number of ensemble members (default: 1 for single reconstruction)
+    ensemble_random_seed: Optional[int] = None  # Base seed for reproducible ensemble generation
+    ensemble_strategy: str = "independent"  # Ensembling approach (currently only "independent" supported)
+    ensemble_save_members: bool = True  # Whether to save individual ensemble member results
+
     def __post_init__(self):
         """Validate configuration parameters after initialization."""
         # Validate global reconstruction parameters
@@ -314,6 +320,29 @@ class SEDConfig:
                         f"ema_start_epoch ({self.ema_start_epoch}) must be less than epochs ({self.epochs})"
                     )
 
+        # Validate ensembling parameters
+        if self.ensemble_size < 1:
+            raise ValueError(f"ensemble_size must be >= 1, got {self.ensemble_size}")
+        if self.ensemble_size > 20:
+            raise ValueError(
+                f"ensemble_size ({self.ensemble_size}) is too large, may cause memory issues. Consider < 20."
+            )
+
+        # Validate ensemble strategy
+        valid_strategies = ["independent"]  # Will expand as more strategies are implemented
+        if self.ensemble_strategy not in valid_strategies:
+            raise ValueError(f"ensemble_strategy must be one of {valid_strategies}, got '{self.ensemble_strategy}'")
+
+        # Warn about wandb conflicts for ensemble runs
+        if self.ensemble_size > 1 and self.is_wandb_enabled():
+            import warnings
+
+            warnings.warn(
+                "Ensembling with wandb logging: Only the first ensemble member will be logged to wandb to prevent conflicts.",
+                UserWarning,
+                stacklevel=2,
+            )
+
     def is_wandb_enabled(self) -> bool:
         """
         Check if wandb logging is enabled.
@@ -345,7 +374,9 @@ class SEDConfig:
 
                 warnings.warn(f"Failed to log to wandb: {e}", RuntimeWarning)
 
-    def log_spectrum_data_to_wandb(self, spectrum_data, wavelength_data, step: int, data_type: str = "spectrum") -> None:
+    def log_spectrum_data_to_wandb(
+        self, spectrum_data, wavelength_data, step: int, data_type: str = "spectrum"
+    ) -> None:
         """
         Log raw spectrum data to wandb if wandb is enabled and data saving is on.
 
@@ -367,35 +398,39 @@ class SEDConfig:
 
                 # Convert to lists for JSON serialization
                 data_dict = {
-                    'spectrum': spectrum_data.tolist() if hasattr(spectrum_data, 'tolist') else list(spectrum_data),
-                    'wavelength': wavelength_data.tolist() if hasattr(wavelength_data, 'tolist') else list(wavelength_data),
-                    'epoch': step,
-                    'data_type': data_type,
+                    "spectrum": spectrum_data.tolist() if hasattr(spectrum_data, "tolist") else list(spectrum_data),
+                    "wavelength": wavelength_data.tolist()
+                    if hasattr(wavelength_data, "tolist")
+                    else list(wavelength_data),
+                    "epoch": step,
+                    "data_type": data_type,
                 }
 
                 # Create wandb Table for summary info
-                table = wandb.Table(columns=['epoch', 'data_type', 'n_pixels', 'flux_min', 'flux_max'])
-                table.add_data(step, data_type, len(spectrum_data),
-                             float(min(spectrum_data)), float(max(spectrum_data)))
+                table = wandb.Table(columns=["epoch", "data_type", "n_pixels", "flux_min", "flux_max"])
+                table.add_data(
+                    step, data_type, len(spectrum_data), float(min(spectrum_data)), float(max(spectrum_data))
+                )
 
                 # Log both the table and create an artifact for the full data
                 self.wandb_run.log(
                     {
-                        f'{data_type}_summary': table,
-                        f'{data_type}_data_step': step,
+                        f"{data_type}_summary": table,
+                        f"{data_type}_data_step": step,
                     },
                     step=step,
                 )
 
                 # Create and log artifact for the full data
-                artifact = wandb.Artifact(f'{data_type}_epoch_{step}', type='spectrum_data')
-                with artifact.new_file(f'{data_type}_epoch_{step}.json', mode='w') as f:
+                artifact = wandb.Artifact(f"{data_type}_epoch_{step}", type="spectrum_data")
+                with artifact.new_file(f"{data_type}_epoch_{step}.json", mode="w") as f:
                     json.dump(data_dict, f)
-                self.wandb_run.log_artifact(artifact, aliases=[f'epoch_{step}'])
+                self.wandb_run.log_artifact(artifact, aliases=[f"epoch_{step}"])
 
             except Exception as e:
                 # Fail silently if wandb logging fails
                 import warnings
+
                 warnings.warn(f"Failed to log spectrum data to wandb: {e}", RuntimeWarning)
 
     def to_wandb_config(self) -> Dict[str, Any]:
@@ -440,6 +475,9 @@ class SEDConfig:
             "use_ema": self.use_ema,
             "ema_decay": self.ema_decay,
             "ema_start_epoch": self.ema_start_epoch,
+            "ensemble_size": self.ensemble_size,
+            "ensemble_strategy": self.ensemble_strategy,
+            "ensemble_save_members": self.ensemble_save_members,
         }
 
         # Handle wandb_run separately
