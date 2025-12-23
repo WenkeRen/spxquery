@@ -39,8 +39,6 @@ class BandData:
         Bandwidth of each narrow-band measurement in microns, shape (M,).
     n_measurements : int
         Number of measurements M.
-    n_rejected : int
-        Number of measurements rejected by quality filters.
     """
 
     def __init__(
@@ -50,7 +48,6 @@ class BandData:
         flux_error: np.ndarray,
         wavelength_center: np.ndarray,
         bandwidth: np.ndarray,
-        n_rejected: int = 0,
     ):
         """
         Initialize BandData container.
@@ -67,8 +64,6 @@ class BandData:
             Central wavelengths (microns).
         bandwidth : np.ndarray
             Bandwidths (microns).
-        n_rejected : int
-            Number of rejected measurements.
         """
         self.band = band
         self.flux = flux
@@ -76,7 +71,6 @@ class BandData:
         self.wavelength_center = wavelength_center
         self.bandwidth = bandwidth
         self.n_measurements = len(flux)
-        self.n_rejected = n_rejected
 
         # Compute wavelength range from data
         half_widths = bandwidth / 2.0
@@ -90,7 +84,6 @@ class BandData:
         return (
             f"BandData(band={self.band}, "
             f"n_measurements={self.n_measurements}, "
-            f"n_rejected={self.n_rejected}, "
             f"wavelength_range={self.wavelength_range[0]:.3f}-{self.wavelength_range[1]:.3f} um)"
         )
 
@@ -476,7 +469,7 @@ def filter_by_band(df: pd.DataFrame, band: str) -> pd.DataFrame:
     return band_df
 
 
-def prepare_band_data(df: pd.DataFrame, band: str, config: SEDConfig) -> Optional[BandData]:
+def prepare_band_data(df: pd.DataFrame, band: str) -> Optional[BandData]:
     """
     Prepare single-band data for reconstruction.
 
@@ -492,8 +485,6 @@ def prepare_band_data(df: pd.DataFrame, band: str, config: SEDConfig) -> Optiona
         Quality-filtered lightcurve data.
     band : str
         Band identifier.
-    config : SEDConfig
-        Configuration (currently unused, reserved for future extensions).
 
     Returns
     -------
@@ -530,7 +521,6 @@ def prepare_band_data(df: pd.DataFrame, band: str, config: SEDConfig) -> Optiona
         flux_error=flux_error,
         wavelength_center=wavelength_center,
         bandwidth=bandwidth,
-        n_rejected=0,  # Already filtered
     )
 
     logger.info(f"Prepared {band_data}")
@@ -586,7 +576,7 @@ def load_all_bands(csv_path: Path, config: SEDConfig) -> Tuple[Dict[str, BandDat
     band_data_dict = {}
 
     for band in all_bands:
-        band_data = prepare_band_data(df_filtered, band, config)
+        band_data = prepare_band_data(df_filtered, band)
         if band_data is not None:
             band_data_dict[band] = band_data
 
