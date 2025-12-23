@@ -23,7 +23,6 @@ Key Features:
 import logging
 from typing import Dict, Tuple
 
-import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse as sp
 from scipy import stats
@@ -393,6 +392,8 @@ def plot_reconstructed_spectrum_with_data(
             title_parts.append(f"DIP: {config.dip_filters} filters")
         if hasattr(config, "dip_depth"):
             title_parts.append(f"{config.dip_depth} layers")
+        if hasattr(config, "ensemble_size") and config.ensemble_size > 1:
+            title_parts.append(f"Ensemble: {config.ensemble_size:d}")
         title = " | ".join(title_parts)
 
         ax.set_title(title, fontsize=11)
@@ -1012,3 +1013,151 @@ def plot_residuals_vs_flux(ax, band_data_dict, config, flux, predicted_flux=None
     ax.set_title("Residuals vs Flux", fontsize=11)
     ax.legend(loc="best", fontsize=10)
     ax.grid(alpha=0.3)
+
+
+def plot_sed_reconstruction_dashboard(
+    result,
+    output_path,
+    dpi=300,
+    title="SED Reconstruction Quality Assessment",
+):
+    """
+    Create and save a comprehensive 4-row diagnostic dashboard for SED reconstruction.
+
+    This function creates a single figure combining all standard diagnostic plots:
+    - Row 1: Reconstructed spectrum with observational data
+    - Row 2: Photometry comparison (observed vs predicted)
+    - Row 3: Weighted residuals vs wavelength
+    - Row 4: Three columns - Residual distribution, Cumulative chi-squared, Residuals vs flux
+
+    Automatically handles both single and ensemble reconstruction results.
+    Extracts config and band_data directly from the result object.
+
+    Parameters
+    ----------
+    result : SEDReconstructionResult or EnsembleResult
+        Reconstruction result object. Can be either:
+        - Single result (SEDReconstructionResult) with attributes:
+          wavelength, flux, config, band_data, validation_metrics
+        - Ensemble result (EnsembleResult) with attributes:
+          wavelength, mean_flux, std_flux, config, band_data, validation_metrics
+    output_path : str or Path
+        Path where the figure will be saved. File extension determines format
+        (e.g., '.pdf', '.png', '.svg'). For PDF format, dpi parameter is ignored.
+    dpi : int, optional
+        Dots per inch for raster formats (PNG, JPG). Default: 300.
+        Ignored for vector formats (PDF, SVG).
+    title : str, optional
+        Overall figure title. Default: "SED Reconstruction Quality Assessment".
+
+    Returns
+    -------
+    None
+        Figure is saved directly to output_path.
+
+    Examples
+    --------
+    >>> # Single reconstruction
+    >>> plot_sed_reconstruction_dashboard(
+    ...     result=single_result,
+    ...     output_path="sed_diagnostic.png",
+    ...     dpi=300
+    ... )
+
+    >>> # Ensemble reconstruction
+    >>> plot_sed_reconstruction_dashboard(
+    ...     result=ensemble_result,
+    ...     output_path="sed_diagnostic.pdf",
+    ...     title="Ensemble SED Reconstruction (N=100)"
+    ... )
+    """
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
+
+    # Extract config and band_data from result object
+    config = result.config
+    band_data_dict = result.band_data
+
+    # Detect result type and extract data
+    if hasattr(result, "mean_flux"):
+        # Ensemble result detected
+        logger.info("Ensemble reconstruction detected - using mean flux and confidence bands")
+        wavelength = result.wavelength
+        flux = result.mean_flux
+        ensemble_std = result.std_flux
+        validation_metrics = result.validation_metrics
+    else:
+        # Single result detected
+        logger.info("Single reconstruction detected")
+        wavelength = result.wavelength
+        flux = result.flux
+        ensemble_std = None
+        validation_metrics = result.validation_metrics
+
+    # Create figure with 4 rows: first 3 rows have 1 column, 4th row has 3 columns
+    # Using GridSpec for custom layout
+    fig = plt.figure(figsize=(16, 14))
+
+    # Create grid specification: 4 rows, with row 4 having 3 columns
+    # Height ratios: taller rows for spectrum plots, shorter for bottom diagnostics
+    gs = fig.add_gridspec(4, 3, height_ratios=[1.2, 1.0, 0.8, 0.9], hspace=0.35, wspace=0.30)
+
+    # Row 1: Reconstructed spectrum with data (spans all 3 columns)
+    ax1 = fig.add_subplot(gs[0, :])
+    plot_reconstructed_spectrum_with_data(
+        ax1, wavelength, flux, band_data_dict, config, ensemble_std, validation_metrics
+    )
+    ax1.set_title(f"{title} - Spectrum & Data", fontsize=13, fontweight="bold")
+
+    # Row 2: Photometry comparison (spans all 3 columns)
+    ax2 = fig.add_subplot(gs[1, :])
+    plot_photometry_comparison(ax2, band_data_dict, config, flux, wavelength=wavelength)
+    ax2.set_title("Photometry Comparison: Observed vs Predicted", fontsize=13, fontweight="bold")
+
+    # Row 3: Weighted residuals (spans all 3 columns)
+    ax3 = fig.add_subplot(gs[2, :])
+    plot_weighted_residuals(ax3, wavelength, flux, band_data_dict, validation_metrics)
+    ax3.set_title("Weighted Residuals vs Wavelength", fontsize=13, fontweight="bold")
+
+    # Row 4: Three diagnostic plots (each in separate column)
+    # Column 1: Residual distribution
+    ax4 = fig.add_subplot(gs[3, 0])
+    plot_residual_distribution(ax4, validation_metrics.weighted_residuals)
+    ax4.set_title("Residual Distribution", fontsize=12, fontweight="bold")
+
+    # Column 2: Cumulative chi-squared
+    ax5 = fig.add_subplot(gs[3, 1])
+    plot_cumulative_chi_squared(ax5, band_data_dict, validation_metrics.weighted_residuals)
+    ax5.set_title(r"Cumulative $\chi^2$ by Wavelength", fontsize=12, fontweight="bold")
+
+    # Column 3: Residuals vs flux
+    ax6 = fig.add_subplot(gs[3, 2])
+    plot_residuals_vs_flux(ax6, band_data_dict, config, flux)
+    ax6.set_title("Residuals vs Predicted Flux", fontsize=12, fontweight="bold")
+
+    # Add overall figure title
+    fig.suptitle(title, fontsize=16, fontweight="bold", y=0.995)
+
+    # Ensure tight layout
+    plt.tight_layout(rect=(0, 0, 1, 0.99))
+
+    # Save figure
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Determine format from extension
+    file_format = output_path.suffix.lower().lstrip(".")
+
+    # Save with appropriate parameters
+    if file_format in ["pdf", "svg", "eps", "ps"]:
+        # Vector formats: dpi doesn't apply
+        logger.info(f"Saving vector format dashboard to {output_path}")
+        fig.savefig(output_path, format=file_format, bbox_inches="tight")
+    else:
+        # Raster formats: use dpi
+        logger.info(f"Saving raster format dashboard to {output_path} at {dpi} dpi")
+        fig.savefig(output_path, dpi=dpi, bbox_inches="tight")
+
+    plt.close(fig)
+    logger.info(f"Dashboard saved successfully to {output_path}")
