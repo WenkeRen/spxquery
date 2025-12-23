@@ -494,7 +494,21 @@ class SEDConfig:
         Dict[str, Any]
             Dictionary representation of configuration.
         """
-        return asdict(self)
+        import typing
+        from dataclasses import asdict, fields
+
+        data = asdict(self)
+
+        # Convert tuples to lists for YAML serialization
+        # (yaml.safe_load can't handle !!python/tuple tags)
+        for field in fields(self.__class__):
+            if field.name in data:
+                origin = typing.get_origin(field.type)
+                if origin is tuple:
+                    if isinstance(data[field.name], tuple):
+                        data[field.name] = list(data[field.name])
+
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SEDConfig":
@@ -511,9 +525,24 @@ class SEDConfig:
         SEDConfig
             Configuration instance.
         """
+        import typing
+        from dataclasses import fields
+
         # Filter to only valid fields to handle extra keys gracefully
         valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_fields}
+
+        # Convert lists back to tuples for tuple-type fields (YAML limitation)
+        for field in fields(cls):
+            if field.name in filtered_data:
+                # Check if the field type is a Tuple
+                origin = typing.get_origin(field.type)
+                if origin is tuple:
+                    # Convert list to tuple if needed
+                    value = filtered_data[field.name]
+                    if isinstance(value, list):
+                        filtered_data[field.name] = tuple(value)
+
         return cls(**filtered_data)
 
     def to_yaml_file(self, filepath: Path) -> Path:
@@ -534,7 +563,7 @@ class SEDConfig:
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
         with open(filepath, "w") as f:
-            yaml.dump(self.to_dict(), f, default_flow_style=False, sort_keys=False)
+            yaml.safe_dump(self.to_dict(), f, default_flow_style=False, sort_keys=False)
 
         return filepath
 

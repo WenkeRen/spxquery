@@ -87,6 +87,104 @@ class BandData:
             f"wavelength_range={self.wavelength_range[0]:.3f}-{self.wavelength_range[1]:.3f} um)"
         )
 
+    def save_to_csv(self, output_dir: Path) -> Path:
+        """
+        Save band data to a CSV file.
+
+        Parameters
+        ----------
+        output_dir : Path
+            Directory to save the CSV file. File will be named {band}.csv.
+
+        Returns
+        -------
+        Path
+            Path to the saved CSV file.
+
+        Notes
+        -----
+        CSV file contains four columns: wavelength, flux, flux_error, bandwidth.
+        """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        csv_path = output_dir / f"{self.band}.csv"
+
+        # Create DataFrame with required columns
+        df = pd.DataFrame(
+            {
+                "wavelength": self.wavelength_center,
+                "flux": self.flux,
+                "flux_error": self.flux_error,
+                "bandwidth": self.bandwidth,
+            }
+        )
+
+        df.to_csv(csv_path, index=False)
+        logger.info(f"Saved {self.band} data to {csv_path}")
+
+        return csv_path
+
+    @classmethod
+    def from_csv(cls, filepath: Path) -> "BandData":
+        """
+        Load BandData from a CSV file.
+
+        Parameters
+        ----------
+        filepath : Path
+            Path to the CSV file. Expected columns: wavelength, flux, flux_error, bandwidth.
+
+        Returns
+        -------
+        BandData
+            Reconstructed BandData object.
+
+        Raises
+        ------
+        FileNotFoundError
+            If CSV file does not exist.
+        ValueError
+            If required columns are missing from CSV.
+        """
+        filepath = Path(filepath)
+
+        if not filepath.exists():
+            raise FileNotFoundError(f"BandData CSV file not found: {filepath}")
+
+        # Extract band name from filename (e.g., "D1.csv" -> "D1")
+        band_name = filepath.stem
+
+        # Load CSV
+        df = pd.read_csv(filepath)
+
+        # Validate required columns
+        required_columns = ["wavelength", "flux", "flux_error", "bandwidth"]
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise ValueError(
+                f"Missing required columns in {filepath}: {missing_columns}. Found columns: {list(df.columns)}"
+            )
+
+        # Extract arrays
+        wavelength_center = df["wavelength"].values
+        flux = df["flux"].values
+        flux_error = df["flux_error"].values
+        bandwidth = df["bandwidth"].values
+
+        # Create BandData object
+        band_data = cls(
+            band=band_name,
+            flux=flux,
+            flux_error=flux_error,
+            wavelength_center=wavelength_center,
+            bandwidth=bandwidth,
+        )
+
+        logger.info(f"Loaded {band_data} from {filepath}")
+
+        return band_data
+
 
 def load_lightcurve_csv(csv_path: Path) -> pd.DataFrame:
     """

@@ -1096,8 +1096,8 @@ def plot_sed_reconstruction_dashboard(
         validation_metrics = result.validation_metrics
 
     # Create figure with 4 rows: first 3 rows have 1 column, 4th row has 3 columns
-    # Using GridSpec for custom layout
-    fig = plt.figure(figsize=(16, 14))
+    # Using GridSpec for custom layout with constrained_layout to avoid tight_layout warnings
+    fig = plt.figure(figsize=(16, 14), constrained_layout=True)
 
     # Create grid specification: 4 rows, with row 4 having 3 columns
     # Height ratios: taller rows for spectrum plots, shorter for bottom diagnostics
@@ -1138,9 +1138,6 @@ def plot_sed_reconstruction_dashboard(
 
     # Add overall figure title
     fig.suptitle(title, fontsize=16, fontweight="bold", y=0.995)
-
-    # Ensure tight layout
-    plt.tight_layout(rect=(0, 0, 1, 0.99))
 
     # Save figure
     output_path = Path(output_path)

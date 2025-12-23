@@ -55,6 +55,7 @@ __version__ = "0.1.0"
 from .config import SEDConfig, export_default_sed_config
 
 # Main reconstruction classes
+from .data_structures import EnsembleResult
 from .reconstruction import (
     SEDReconstructor,
     SEDReconstructionResult,
@@ -63,6 +64,9 @@ from .reconstruction import (
 # Data structures
 from .data_loader import BandData
 from .validation import ValidationMetrics
+
+# Save/load utilities
+from .io import sed_load_all, sed_save_all
 
 # Public API
 __all__ = [
@@ -74,7 +78,11 @@ __all__ = [
     # Main classes
     "SEDReconstructor",
     "SEDReconstructionResult",
+    "EnsembleResult",
     # Data structures
     "BandData",
     "ValidationMetrics",
+    # Save/load utilities
+    "sed_save_all",
+    "sed_load_all",
 ]

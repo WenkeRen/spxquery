@@ -5,10 +5,13 @@ This module provides functions to evaluate reconstruction quality through
 residual analysis, chi-squared statistics, and goodness-of-fit metrics.
 """
 
+import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import scipy.sparse as sp
 from scipy import stats
 
@@ -77,6 +80,157 @@ class ValidationMetrics:
     smoothness_tv: float
     residual_oscillation: float
     residual_rms: float
+
+    def save_to_files(self, output_dir: Path) -> tuple[Path, Path]:
+        """
+        Save validation metrics to JSON and CSV files.
+
+        Parameters
+        ----------
+        output_dir : Path
+            Directory to save the files. Creates:
+            - {output_dir}/validation.json (scalar metrics)
+            - {output_dir}/residual.csv (residuals arrays)
+
+        Returns
+        -------
+        json_path : Path
+            Path to validation.json file.
+        csv_path : Path
+            Path to residual.csv file.
+        """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save scalar metrics to JSON
+        json_path = output_dir / "validation.json"
+        scalar_metrics = {
+            "chi_squared": float(self.chi_squared),
+            "chi_squared_per_obs": float(self.chi_squared_per_obs),
+            "n_obs": int(self.n_obs),
+            "n_sample": int(self.n_sample),
+            "residual_mean": float(self.residual_mean),
+            "residual_std": float(self.residual_std),
+            "weighted_residual_mean": float(self.weighted_residual_mean),
+            "weighted_residual_std": float(self.weighted_residual_std),
+            "max_residual": float(self.max_residual),
+            "normality_pvalue": (float(self.normality_pvalue) if not np.isnan(self.normality_pvalue) else None),
+            "negative_flux_fraction": float(self.negative_flux_fraction),
+            "smoothness_tv": float(self.smoothness_tv),
+            "residual_oscillation": (
+                float(self.residual_oscillation) if not np.isnan(self.residual_oscillation) else None
+            ),
+            "residual_rms": float(self.residual_rms),
+        }
+
+        with open(json_path, "w") as f:
+            json.dump(scalar_metrics, f, indent=2)
+        logger.info(f"Saved validation metrics to {json_path}")
+
+        # Save residuals to CSV
+        csv_path = output_dir / "residual.csv"
+        df = pd.DataFrame(
+            {
+                "residuals": self.residuals,
+                "weighted_residuals": self.weighted_residuals,
+            }
+        )
+        df.to_csv(csv_path, index=False)
+        logger.info(f"Saved residuals to {csv_path}")
+
+        return json_path, csv_path
+
+    @classmethod
+    def from_files(cls, json_path: Path, csv_path: Path) -> "ValidationMetrics":
+        """
+        Load ValidationMetrics from JSON and CSV files.
+
+        Parameters
+        ----------
+        json_path : Path
+            Path to validation.json file with scalar metrics.
+        csv_path : Path
+            Path to residual.csv file with residual arrays.
+
+        Returns
+        -------
+        ValidationMetrics
+            Reconstructed ValidationMetrics object.
+
+        Raises
+        ------
+        FileNotFoundError
+            If required files do not exist.
+        ValueError
+            If required fields are missing from JSON or CSV.
+        """
+        json_path = Path(json_path)
+        csv_path = Path(csv_path)
+
+        if not json_path.exists():
+            raise FileNotFoundError(f"Validation JSON file not found: {json_path}")
+        if not csv_path.exists():
+            raise FileNotFoundError(f"Residual CSV file not found: {csv_path}")
+
+        # Load scalar metrics from JSON
+        with open(json_path, "r") as f:
+            scalar_metrics = json.load(f)
+
+        # Validate required fields
+        required_fields = [
+            "chi_squared",
+            "chi_squared_per_obs",
+            "n_obs",
+            "n_sample",
+            "residual_mean",
+            "residual_std",
+            "weighted_residual_mean",
+            "weighted_residual_std",
+            "max_residual",
+            "normality_pvalue",
+            "negative_flux_fraction",
+            "smoothness_tv",
+            "residual_oscillation",
+            "residual_rms",
+        ]
+        missing_fields = [field for field in required_fields if field not in scalar_metrics]
+        if missing_fields:
+            raise ValueError(f"Missing required fields in {json_path}: {missing_fields}")
+
+        # Load residuals from CSV
+        df = pd.read_csv(csv_path)
+        if "residuals" not in df.columns or "weighted_residuals" not in df.columns:
+            raise ValueError(
+                f"CSV {csv_path} must contain 'residuals' and 'weighted_residuals' columns. "
+                f"Found columns: {list(df.columns)}"
+            )
+
+        residuals = df["residuals"].values
+        weighted_residuals = df["weighted_residuals"].values
+
+        # Create ValidationMetrics object
+        metrics = cls(
+            chi_squared=scalar_metrics["chi_squared"],
+            chi_squared_per_obs=scalar_metrics["chi_squared_per_obs"],
+            n_obs=scalar_metrics["n_obs"],
+            n_sample=scalar_metrics["n_sample"],
+            residuals=residuals,
+            weighted_residuals=weighted_residuals,
+            residual_mean=scalar_metrics["residual_mean"],
+            residual_std=scalar_metrics["residual_std"],
+            weighted_residual_mean=scalar_metrics["weighted_residual_mean"],
+            weighted_residual_std=scalar_metrics["weighted_residual_std"],
+            max_residual=scalar_metrics["max_residual"],
+            normality_pvalue=scalar_metrics.get("normality_pvalue", np.nan),
+            negative_flux_fraction=scalar_metrics["negative_flux_fraction"],
+            smoothness_tv=scalar_metrics["smoothness_tv"],
+            residual_oscillation=scalar_metrics.get("residual_oscillation", np.nan),
+            residual_rms=scalar_metrics["residual_rms"],
+        )
+
+        logger.info(f"Loaded ValidationMetrics from {json_path} and {csv_path}")
+
+        return metrics
 
 
 class SpectralEvaluator:
