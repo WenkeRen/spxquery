@@ -1096,12 +1096,21 @@ def plot_sed_reconstruction_dashboard(
         validation_metrics = result.validation_metrics
 
     # Create figure with 4 rows: first 3 rows have 1 column, 4th row has 3 columns
-    # Using GridSpec for custom layout with constrained_layout to avoid tight_layout warnings
-    fig = plt.figure(figsize=(16, 14), constrained_layout=True)
+    fig = plt.figure(figsize=(16, 14), constrained_layout=False)
 
     # Create grid specification: 4 rows, with row 4 having 3 columns
     # Height ratios: taller rows for spectrum plots, shorter for bottom diagnostics
-    gs = fig.add_gridspec(4, 3, height_ratios=[1.2, 1.0, 0.8, 0.9], hspace=0.35, wspace=0.30)
+    gs = fig.add_gridspec(
+        4,
+        3,
+        height_ratios=[1.2, 1.0, 0.8, 0.9],
+        hspace=0.35,
+        wspace=0.30,
+        top=0.95,  # Controls the top of the subplot area
+        bottom=0.05,
+        left=0.08,
+        right=0.95,
+    )
 
     # Row 1: Reconstructed spectrum with data (spans all 3 columns)
     ax1 = fig.add_subplot(gs[0, :])
