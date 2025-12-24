@@ -1120,12 +1120,12 @@ def plot_sed_reconstruction_dashboard(
     ax1.set_title(f"{title} - Spectrum & Data", fontsize=13, fontweight="bold")
 
     # Row 2: Photometry comparison (spans all 3 columns)
-    ax2 = fig.add_subplot(gs[1, :])
+    ax2 = fig.add_subplot(gs[1, :], sharex=ax1, sharey=ax1)
     plot_photometry_comparison(ax2, band_data_dict, config, flux, wavelength=wavelength)
     ax2.set_title("Photometry Comparison: Observed vs Predicted", fontsize=13, fontweight="bold")
 
     # Row 3: Weighted residuals (spans all 3 columns)
-    ax3 = fig.add_subplot(gs[2, :])
+    ax3 = fig.add_subplot(gs[2, :], sharex=ax1)
     plot_weighted_residuals(ax3, wavelength, flux, band_data_dict, validation_metrics)
     ax3.set_title("Weighted Residuals vs Wavelength", fontsize=13, fontweight="bold")
 
