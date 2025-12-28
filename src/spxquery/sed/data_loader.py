@@ -11,8 +11,8 @@ from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from scipy.stats import median_abs_deviation
 from astropy.stats import sigma_clip
+from scipy.stats import median_abs_deviation
 
 from .config import SEDConfig
 
@@ -432,6 +432,7 @@ def apply_quality_filters(df: pd.DataFrame, config: SEDConfig) -> Tuple[pd.DataF
         "bad_flags": 0,
         "nan_values": 0,
         "non_positive_error": 0,
+        "wavelength_range": 0,
         "low_snr": 0,
         "sigma_clipped": 0,
         "final_count": 0,
@@ -455,6 +456,18 @@ def apply_quality_filters(df: pd.DataFrame, config: SEDConfig) -> Tuple[pd.DataF
     nan_mask = df[critical_columns].isna().any(axis=1)
     rejection_stats["nan_values"] = nan_mask.sum()
     good_mask &= ~nan_mask
+
+    # Filter 2.5: Wavelength range check (exclude measurements partially outside reconstruction range)
+    lambda_min, lambda_max = config.wavelength_range
+    # Calculate measurement edges: each measurement covers [wavelength - bandwidth/2, wavelength + bandwidth/2]
+    half_widths = df["bandwidth"] / 2.0
+    lower_edges = df["wavelength"] - half_widths
+    upper_edges = df["wavelength"] + half_widths
+    # Exclude measurements that extend beyond reconstruction range
+    # (inclusive boundaries: keep if lower_edge >= lambda_min AND upper_edge <= lambda_max)
+    out_of_range = (lower_edges < lambda_min) | (upper_edges > lambda_max)
+    rejection_stats["wavelength_range"] = out_of_range.sum()
+    good_mask &= ~out_of_range
 
     # Filter 3: Remove non-positive flux_error (flux can be negative, but error must be positive)
     non_positive_error = df["flux_error"] <= 0
@@ -521,12 +534,17 @@ def apply_quality_filters(df: pd.DataFrame, config: SEDConfig) -> Tuple[pd.DataF
             logger.info(f"    1. Bad pixel flags: {rejection_stats['bad_flags']}")
         if rejection_stats["nan_values"] > 0:
             logger.info(f"    2. NaN values: {rejection_stats['nan_values']}")
+        if rejection_stats["wavelength_range"] > 0:
+            logger.info(
+                f"    3. Wavelength range (outside [{lambda_min:.3f}, {lambda_max:.3f}] um): "
+                f"{rejection_stats['wavelength_range']}"
+            )
         if rejection_stats["non_positive_error"] > 0:
-            logger.info(f"    3. Non-positive flux_error: {rejection_stats['non_positive_error']}")
+            logger.info(f"    4. Non-positive flux_error: {rejection_stats['non_positive_error']}")
         if rejection_stats["low_snr"] > 0:
-            logger.info(f"    4. Low SNR (< {config.sigma_threshold}): {rejection_stats['low_snr']}")
+            logger.info(f"    5. Low SNR (< {config.sigma_threshold}): {rejection_stats['low_snr']}")
         if rejection_stats["sigma_clipped"] > 0:
-            logger.info(f"    5. Rolling MAD sigma clipping: {rejection_stats['sigma_clipped']}")
+            logger.info(f"    6. Rolling MAD sigma clipping: {rejection_stats['sigma_clipped']}")
 
     if len(df_filtered) == 0:
         logger.warning("All measurements rejected by quality filters! Consider relaxing sigma_threshold or bad_flags.")
