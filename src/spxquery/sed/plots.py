@@ -404,7 +404,7 @@ def plot_reconstructed_spectrum_with_data(
     ax.grid(alpha=0.3)
 
 
-def plot_weighted_residuals(ax, wavelength, flux, band_data_dict, validation_metrics):
+def plot_weighted_residuals(ax, band_data_dict, validation_metrics):
     """
     Plot weighted residuals (observed - model) / sigma with statistics.
 
@@ -422,43 +422,30 @@ def plot_weighted_residuals(ax, wavelength, flux, band_data_dict, validation_met
     ----------
     ax : matplotlib.Axes
         Axes object to plot on.
-    wavelength : array_like
-        Array of wavelength values (microns).
-    flux : array_like
-        Array of reconstructed flux values (microJy).
     band_data_dict : dict
         Dictionary mapping band names to BandData objects.
     validation_metrics : ValidationMetrics
-        Validation metrics object with residual statistics.
+        Validation metrics object with residual statistics. Must have weighted_residuals attribute.
 
     Notes
     -----
     This function modifies the provided Axes object in-place.
     """
-    # Convert to numpy arrays if needed
-    wavelength = np.asarray(wavelength)
-    flux = np.asarray(flux)
-
     colors = get_spex_band_colors()
 
-    # Calculate weighted residuals
+    # Extract wavelengths and colors for each observation
     all_wavelengths = []
-    all_weighted_residuals = []
     all_colors = []
 
     for band_name, band_data in band_data_dict.items():
         color = colors.get(band_name, "gray")
-
-        # Interpolate reconstructed spectrum at measurement wavelengths
-        model_flux = np.interp(band_data.wavelength_center, wavelength, flux)
-        residuals = band_data.flux - model_flux
-        weighted_residuals = residuals / band_data.flux_error
-
         all_wavelengths.extend(band_data.wavelength_center)
-        all_weighted_residuals.extend(weighted_residuals)
         all_colors.extend([color] * len(band_data.wavelength_center))
 
-    if not all_weighted_residuals:
+    # Use pre-computed weighted residuals from validation metrics
+    all_weighted_residuals = validation_metrics.weighted_residuals
+
+    if len(all_weighted_residuals) == 0:
         ax.text(0.5, 0.5, "No data available", transform=ax.transAxes, ha="center", va="center", fontsize=12)
         return
 
@@ -504,16 +491,15 @@ def plot_weighted_residuals(ax, wavelength, flux, band_data_dict, validation_met
     add_statistics_text(ax, stats_dict, position="top-right")
 
     # Set appropriate axis limits
-    # X-axis: wavelength range with padding, match spectrum data if available
+    # X-axis: wavelength range with padding
     if len(all_wavelengths) > 0:
         wl_min_obs, wl_max_obs = min(all_wavelengths), max(all_wavelengths)
         wl_range_obs = wl_max_obs - wl_min_obs
         ax.set_xlim(wl_min_obs - 0.01 * wl_range_obs, wl_max_obs + 0.01 * wl_range_obs)
     else:
-        # Fall back to spectrum wavelength range
-        wl_min, wl_max = wavelength.min(), wavelength.max()
-        wl_range = wl_max - wl_min
-        ax.set_xlim(wl_min - 0.01 * wl_range, wl_max + 0.01 * wl_range)
+        # No data available
+        ax.text(0.5, 0.5, "No data available", transform=ax.transAxes, ha="center", va="center", fontsize=12)
+        return
 
     # Y-axis: weighted residual limits with minimum range
     y_max = max(4, np.abs(all_weighted_residuals).max() * 1.1)
@@ -1126,7 +1112,7 @@ def plot_sed_reconstruction_dashboard(
 
     # Row 3: Weighted residuals (spans all 3 columns)
     ax3 = fig.add_subplot(gs[2, :], sharex=ax1)
-    plot_weighted_residuals(ax3, wavelength, flux, band_data_dict, validation_metrics)
+    plot_weighted_residuals(ax3, band_data_dict, validation_metrics)
     ax3.set_title("Weighted Residuals vs Wavelength", fontsize=13, fontweight="bold")
 
     # Row 4: Three diagnostic plots (each in separate column)
