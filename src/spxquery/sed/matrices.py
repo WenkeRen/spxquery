@@ -6,10 +6,16 @@ Deep Image Prior spectral reconstruction:
 - H: Measurement matrix (M x N) relating observations to spectrum with frequency step normalization
 - w: Weight vector (M,) for chi-squared data fidelity
 - Frequency grid computation and step normalization
+- Filter response functions (boxcar and Gaussian profiles)
 
 The measurement matrix H incorporates proper frequency step normalization
 to handle non-uniform wavelength grids while maintaining energy conservation.
 Input and output fluxes remain in microjansky (μJy).
+
+Supported Filter Profiles
+-------------------------
+- **boxcar**: Rectangular filter with unit response within bandwidth
+- **gaussian**: Gaussian filter with bandwidth interpreted as FWHM, response computed within 3-sigma
 """
 
 import logging
@@ -25,6 +31,10 @@ from .data_loader import BandData
 from .data_structures import GlobalSpectralData
 
 logger = logging.getLogger(__name__)
+
+# Gaussian FWHM to sigma conversion constant
+# FWHM = 2 * sqrt(2 * ln(2)) * sigma ≈ 2.35482 * sigma
+GAUSSIAN_FWHM_TO_SIGMA = 2.0 * np.sqrt(2.0 * np.log(2.0))
 
 
 def boxcar_filter_response(wavelength: float, center: float, bandwidth: float) -> float:
@@ -58,6 +68,52 @@ def boxcar_filter_response(wavelength: float, center: float, bandwidth: float) -
         return 0.0
 
 
+def gaussian_filter_response(wavelength: float, center: float, bandwidth: float) -> float:
+    """
+    Compute Gaussian filter response at a given wavelength.
+
+    The filter has a Gaussian profile with bandwidth interpreted as FWHM.
+    Response is computed only within 3-sigma of the center for efficiency.
+
+    Parameters
+    ----------
+    wavelength : float
+        Wavelength to evaluate filter response at (microns).
+    center : float
+        Central wavelength of the narrow-band filter (microns).
+    bandwidth : float
+        Full Width at Half Maximum (FWHM) of the Gaussian (microns).
+
+    Returns
+    -------
+    float
+        Filter response: exp(-(wavelength - center)^2 / (2 * sigma^2)) if within 3-sigma,
+        0.0 otherwise.
+
+    Notes
+    -----
+    The relationship between FWHM and sigma is:
+        FWHM = 2 * sqrt(2 * ln(2)) * sigma ≈ 2.35482 * sigma
+    Therefore: sigma = bandwidth / GAUSSIAN_FWHM_TO_SIGMA
+
+    The 3-sigma range contains 99.7% of the Gaussian integrated response.
+    """
+    # Convert FWHM to sigma
+    sigma = bandwidth / GAUSSIAN_FWHM_TO_SIGMA
+
+    # Compute 3-sigma bounds
+    lower_bound = center - 3.0 * sigma
+    upper_bound = center + 3.0 * sigma
+
+    # Return 0 outside 3-sigma range
+    if wavelength < lower_bound or wavelength > upper_bound:
+        return 0.0
+
+    # Gaussian response with peak normalized to 1.0
+    response = np.exp(-0.5 * ((wavelength - center) / sigma) ** 2)
+    return response
+
+
 def get_filter_response_function(profile: str) -> Callable[[float, float, float], float]:
     """
     Get filter response function for specified profile type.
@@ -65,7 +121,7 @@ def get_filter_response_function(profile: str) -> Callable[[float, float, float]
     Parameters
     ----------
     profile : str
-        Filter profile name. Currently only 'boxcar' is supported.
+        Filter profile name. Supported: 'boxcar', 'gaussian'.
 
     Returns
     -------
@@ -79,8 +135,10 @@ def get_filter_response_function(profile: str) -> Callable[[float, float, float]
     """
     if profile == "boxcar":
         return boxcar_filter_response
+    elif profile == "gaussian":
+        return gaussian_filter_response
     else:
-        raise ValueError(f"Unknown filter profile: '{profile}'. Only 'boxcar' is supported.")
+        raise ValueError(f"Unknown filter profile: '{profile}'. Supported profiles: 'boxcar', 'gaussian'.")
 
 
 def build_measurement_matrix(band_data: BandData, wavelength_grid: np.ndarray, config: SEDConfig) -> sp.csr_matrix:
@@ -107,7 +165,7 @@ def build_measurement_matrix(band_data: BandData, wavelength_grid: np.ndarray, c
     wavelength_grid : np.ndarray
         Wavelength grid for reconstructed spectrum (microns), shape (N,).
     config : SEDConfig
-        Configuration with filter_profile setting.
+        Configuration with filter_profile setting ('boxcar' or 'gaussian').
 
     Returns
     -------
@@ -119,6 +177,10 @@ def build_measurement_matrix(band_data: BandData, wavelength_grid: np.ndarray, c
     The matrix incorporates frequency step normalization to handle non-uniform
     wavelength grids while maintaining energy conservation. Each row sums to 1,
     representing the proper weighting of spectrum contributions to each measurement.
+
+    Filter profiles:
+    - **boxcar**: Uniform response within [center - bandwidth/2, center + bandwidth/2]
+    - **gaussian**: Gaussian response with bandwidth as FWHM, computed within 3-sigma
 
     The matrix is built in COO format (efficient for construction) then
     converted to CSR format (efficient for matrix-vector multiplication).
@@ -145,11 +207,21 @@ def build_measurement_matrix(band_data: BandData, wavelength_grid: np.ndarray, c
         center = band_data.wavelength_center[i]
         bandwidth = band_data.bandwidth[i]
 
-        # Determine which wavelength bins are covered by this filter
-        # For efficiency, only check wavelengths near the filter center
-        half_width = bandwidth / 2.0
-        lower_bound = center - half_width
-        upper_bound = center + half_width
+        # Determine wavelength range based on filter profile
+        if config.filter_profile == "boxcar":
+            half_width = bandwidth / 2.0
+            lower_bound = center - half_width
+            upper_bound = center + half_width
+        elif config.filter_profile == "gaussian":
+            # For Gaussian, use 3-sigma range (99.7% of integrated response)
+            sigma = bandwidth / GAUSSIAN_FWHM_TO_SIGMA
+            lower_bound = center - 3.0 * sigma
+            upper_bound = center + 3.0 * sigma
+        else:
+            # Fallback: use bandwidth as half-width
+            half_width = bandwidth / 2.0
+            lower_bound = center - half_width
+            upper_bound = center + half_width
 
         # Find indices of wavelength bins within this range
         in_range = (wavelength_grid >= lower_bound) & (wavelength_grid <= upper_bound)
@@ -157,16 +229,19 @@ def build_measurement_matrix(band_data: BandData, wavelength_grid: np.ndarray, c
 
         # Compute frequency normalization for this measurement window
         if len(j_indices) > 0:
-            # Sum of frequency steps within the window
-            window_freq_sum = np.sum(delta_nu[j_indices])
+            # Compute filter responses for all wavelength bins in range
+            responses = np.array([filter_func(wavelength_grid[j], center, bandwidth) for j in j_indices])
 
-            # Compute filter response for each wavelength bin in range
-            for j in j_indices:
-                wavelength = wavelength_grid[j]
-                response = filter_func(wavelength, center, bandwidth)
+            # For proper energy conservation, normalize by response-weighted frequency sum
+            # This ensures: sum(response * delta_nu / weighted_sum) = 1
+            window_freq_sum = np.sum(responses * delta_nu[j_indices])
+
+            # Build matrix entries
+            for idx, j in enumerate(j_indices):
+                response = responses[idx]
 
                 if response > 0:  # Only store non-zero entries
-                    # Apply frequency step normalization: weight = response × (Δν_j / ΣΔν_window)
+                    # Apply frequency step normalization: weight = response × (Δν_j / Σ(response × Δν))
                     weight = response * (delta_nu[j] / window_freq_sum)
                     rows.append(i)
                     cols.append(j)
@@ -379,7 +454,8 @@ def build_global_observation_data(all_band_data: Dict[str, BandData], config: SE
     )
 
     logger.info(
-        f"Built global dataset: {H_global.shape[0]} observations, {H_global.shape[1]} spectral bins, {H_global.nnz} non-zeros"
+        f"Built global dataset: {H_global.shape[0]} observations, "
+        f"{H_global.shape[1]} spectral bins, {H_global.nnz} non-zeros"
     )
 
     return dataset
