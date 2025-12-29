@@ -5,7 +5,7 @@ This module provides configuration classes for spectral reconstruction
 from SPHEREx narrow-band photometry using PyTorch-based Deep Image Prior.
 """
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -175,7 +175,7 @@ class SEDConfig:
     sigma_clip_window: int = 21
     sigma_clip_max_iterations: int = 10
 
-    # Physical modeling
+    # Filter profile
     filter_profile: str = "boxcar"
 
     # Numerical stability
@@ -296,7 +296,7 @@ class SEDConfig:
                 raise ValueError(f"sigma_clip_max_iterations must be >= 1, got {self.sigma_clip_max_iterations}")
 
         # Validate filter profile
-        valid_filters = ["boxcar"]
+        valid_filters = ["boxcar", "gaussian"]  # Will expand as more profiles are implemented
         if self.filter_profile not in valid_filters:
             raise ValueError(f"filter_profile must be one of {valid_filters}, got '{self.filter_profile}'")
 
@@ -394,6 +394,7 @@ class SEDConfig:
         if self.is_wandb_enabled() and self.wandb_save_raw_data:
             try:
                 import json
+
                 import wandb
 
                 # Convert to lists for JSON serialization
