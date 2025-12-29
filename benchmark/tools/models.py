@@ -23,12 +23,12 @@ from astropy import constants as const
 # ============================================================================
 
 SPHEREX_BANDS: Dict[str, Dict[str, float]] = {
-    "B1": {"wave_min": 0.75, "wave_max": 1.09, "R": 41},
-    "B2": {"wave_min": 1.10, "wave_max": 1.62, "R": 41},
-    "B3": {"wave_min": 1.63, "wave_max": 2.41, "R": 41},
-    "B4": {"wave_min": 2.42, "wave_max": 3.82, "R": 35},
-    "B5": {"wave_min": 3.83, "wave_max": 4.41, "R": 110},
-    "B6": {"wave_min": 4.42, "wave_max": 5.00, "R": 130},
+    "D1": {"wave_min": 0.75, "wave_max": 1.09, "R": 41},
+    "D2": {"wave_min": 1.10, "wave_max": 1.62, "R": 41},
+    "D3": {"wave_min": 1.63, "wave_max": 2.41, "R": 41},
+    "D4": {"wave_min": 2.42, "wave_max": 3.82, "R": 35},
+    "D5": {"wave_min": 3.83, "wave_max": 4.41, "R": 110},
+    "D6": {"wave_min": 4.42, "wave_max": 5.00, "R": 130},
 }
 
 
@@ -101,7 +101,7 @@ class SpectralModelConfig:
     band_id : str, optional
         SPHEREx band ID to use as template for wavelength range and resolution.
         If specified, overrides wavelength_min/max and spectral_resolution.
-        Default: "B3" (1.63-2.41 um, R=41).
+        Default: "D3" (1.63-2.41 um, R=41).
     """
 
     # Continuum parameters
@@ -126,7 +126,7 @@ class SpectralModelConfig:
     oversample_factor: float = 500
 
     # SPHEREx band preset
-    band_id: str = "B3"  # Default: Band 3
+    band_id: str = "D3"  # Default: Band 3
 
     def __post_init__(self):
         """Validate and set default values from SPHEREx band definitions."""
@@ -446,7 +446,7 @@ def generate_spectral_model(config: SpectralModelConfig) -> Tuple[np.ndarray, np
     ...     line1_ew=20.0,
     ...     line1_fwhm_vel=1000.0,
     ...     line2_flux_ratio=0.0,  # Single line
-    ...     band_id="B3"
+    ...     band_id="D3"
     ... )
     >>> wavelength, flux = generate_spectral_model(config)
     >>> print(f"Wavelength range: {wavelength.min():.2f} - {wavelength.max():.2f} microns")
@@ -560,7 +560,7 @@ def create_default_model() -> SpectralModelConfig:
         line1_ew=20.0,
         line1_fwhm_vel=3000.0,
         line2_flux_ratio=0.0,
-        band_id="B3",
+        band_id="D3",
     )
     return config
 
@@ -593,7 +593,7 @@ def create_double_line_model(
         line2_flux_ratio=flux_ratio,
         line2_separation_fwhm=separation_fwhm,
         line2_same_fwhm=True,
-        band_id="B3",
+        band_id="D3",
     )
     return config
 
@@ -693,7 +693,7 @@ if __name__ == "__main__":
             line1_ew=20.0,
             line1_fwhm_vel=1000.0,
             line2_flux_ratio=0.0,
-            band_id="B3",
+            band_id="D3",
         )
         wave3, flux3 = generate_spectral_model(config3)
         print(
@@ -716,7 +716,7 @@ if __name__ == "__main__":
     if HAS_MATPLOTLIB:
         ax = axes[1, 1]
 
-    for band_id in ["B1", "B3", "B6"]:
+    for band_id in ["D1", "D3", "D6"]:
         config4 = SpectralModelConfig(
             magnitude=18.0,
             slope=0.0,
