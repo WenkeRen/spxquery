@@ -51,6 +51,23 @@ def set_random_seed(seed: int):
     torch.backends.cudnn.benchmark = False
 
 
+def cauchy_loss(x: torch.Tensor, gamma: float = 1.0) -> torch.Tensor:
+    """
+    Cauchy (Lorentzian) loss function: log(1 + (x/gamma)^2).
+
+    Why this fixes the 'Line Broadening' and 'High-Freq Leakage' problem:
+    1. Small x (x << gamma): Approx (x/gamma)^2 -> L2 Norm.
+       - Strong smoothing for background noise.
+    2. Large x (x >> gamma): Approx 2*log(x/gamma) -> Logarithmic growth.
+       - Gradient dL/dx approx 2/x.
+       - As x increases (strong line signal), the penalty gradient goes to 0.
+
+    This effectively tells the solver: "If the CWT coefficient is large enough (meaning it's likely
+    part of a real line, even in high-freq scales), stop punishing it."
+    """
+    return torch.sum(torch.log(1 + (x / gamma) ** 2))
+
+
 def create_learning_rate_scheduler(optimizer, config: SEDConfig):
     """
     Create a learning rate scheduler based on configuration.
@@ -660,6 +677,18 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
     pbar = tqdm(range(config.epochs), desc="Optimizing Spectrum")
 
+    # --- Self-Adaptive Parameters ---
+    # cauchy_k: Sensitivity factor (kappa).
+    # gamma = k * sigma_noise.
+    # Typically, k=3 means "preserve signals > 3 sigma".
+    # Since we are using flux_scale to normalize, we can use a simpler heuristic or dynamic estimation.
+    cauchy_k = 3.0
+
+    # [Protection] Safe floor for gamma during warmup and normal training
+    # During warmup, we use a much larger floor to be "forgiving".
+    warmup_gamma_floor = 0.1  # Very loose constraint (10% of flux) during warmup
+    normal_gamma_floor = 1e-4  # Tight constraint (numerical stability) after warmup
+
     for epoch in pbar:
         # Update jitter component based on current epoch
         model.update_jitter(epoch)
@@ -687,8 +716,42 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
         # Normalize spectrum before applying CWT to maintain consistent regularization strength
         cwt_coeffs = cwt(spectrum / flux_scale_device)
         loss_reg = 0.0
+        # for coeff in cwt_coeffs:
+        #     loss_reg += cauchy_loss(coeff, gamma=base_gamma)
+        # loss_reg += torch.sum(torch.abs(coeff))
+        # loss_reg += torch.sum(torch.log(1 + torch.abs(coeff) / 1e-6))
+
+        # --- Dynamic Noise Estimation (MAD) ---
+        # We estimate the 'noise level' of the current CWT scale dynamically.
+        # MAD is robust against the emission lines (outliers).
+        # Note: We use .detach() because we don't want to optimize the gamma itself.
+        # Determine Gamma Floor based on Epoch (Warmup Logic)
+        if epoch < config.learning_rate_warmup_epochs:
+            # During warmup, ensure gamma doesn't drop below a safe, large value.
+            # This prevents huge gradients from CWT noise early on.
+            current_gamma_floor = torch.tensor(warmup_gamma_floor, device=device)
+
+            # Optional: Linear ramp-up of Reg Weight
+            # ramp_factor = epoch / config.learning_rate_warmup_epochs
+        else:
+            # After warmup, allow gamma to go low (be sensitive), just keeping numerical stability.
+            current_gamma_floor = torch.tensor(normal_gamma_floor, device=device)
+            # ramp_factor = 1.0
+
         for coeff in cwt_coeffs:
-            loss_reg += torch.sum(torch.abs(coeff))
+            with torch.no_grad():
+                median_val = torch.median(coeff)
+                mad_sigma = 1.4826 * torch.median(torch.abs(coeff - median_val))
+
+                # Calculate target adaptive gamma
+                adaptive_gamma = cauchy_k * mad_sigma
+
+                # Apply Protection Floor
+                # During warmup, this will likely be dominated by `warmup_gamma_floor` (0.1)
+                # After warmup, this will be dominated by `adaptive_gamma` (actual noise)
+                effective_gamma = torch.max(adaptive_gamma, current_gamma_floor)
+
+            loss_reg += cauchy_loss(coeff, gamma=effective_gamma)
 
         loss_reg = loss_reg * config.regularization_weight
 
