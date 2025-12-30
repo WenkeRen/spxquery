@@ -6,6 +6,7 @@ data loading, global dataset construction, PyTorch-based Deep Image Prior optimi
 and validation for unified spectral reconstruction across all SPHEREx detector bands.
 """
 
+import concurrent.futures
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,56 @@ from .solver_torch import solve_global_reconstruction
 from .validation import SpectralEvaluator
 
 logger = logging.getLogger(__name__)
+
+
+def _run_ensemble_member(
+    member_index: int,
+    member_config: SEDConfig,
+    band_data_dict: Dict[str, BandData],
+    metadata: Optional[Dict[str, any]] = None,
+    csv_path: Optional[Path] = None,
+) -> tuple[int, SEDReconstructionResult]:
+    """
+    Standalone function to run a single ensemble member reconstruction.
+
+    This function is designed to be used with multiprocessing for parallel ensemble execution.
+
+    Parameters
+    ----------
+    member_index : int
+        Index of this ensemble member.
+    member_config : SEDConfig
+        Configuration for this ensemble member (with specific random seed).
+    band_data_dict : Dict[str, BandData]
+        Band data for all SPHEREx detectors.
+    metadata : Optional[Dict[str, any]]
+        Additional metadata to include in results.
+    csv_path : Optional[Path]
+        Original CSV path for metadata (if available).
+
+    Returns
+    -------
+    tuple[int, SEDReconstructionResult]
+        Tuple of (member_index, reconstruction_result) for ordered results.
+    """
+    logger.info(f"Running ensemble member {member_index + 1}/{member_config.ensemble_size}")
+
+    # Create member metadata
+    member_metadata = {
+        "ensemble_member": member_index,
+        "ensemble_size": member_config.ensemble_size,
+        "random_seed": member_config.ensemble_random_seed,
+    }
+    if csv_path is not None:
+        member_metadata["csv_path"] = str(csv_path)
+    if metadata:
+        member_metadata.update(metadata)
+
+    # Create reconstructor with member config and run reconstruction
+    reconstructor = SEDReconstructor(member_config)
+    member_result = reconstructor._run_single_reconstruction(band_data_dict, member_metadata)
+
+    return (member_index, member_result)
 
 
 class SEDReconstructor:
@@ -192,33 +243,69 @@ class SEDReconstructor:
         # Create ensemble member configurations with different random seeds
         ensemble_configs = self._create_ensemble_configs()
 
-        # Run ensemble members
-        member_results = []
-        ensemble_fluxes = []
+        # Determine if parallel processing should be used
+        use_parallel = self.config.ensemble_n_workers is not None and self.config.ensemble_n_workers > 1
 
-        for i, member_config in enumerate(ensemble_configs):
-            logger.info(f"Running ensemble member {i + 1}/{self.config.ensemble_size}")
+        if use_parallel:
+            n_workers = min(self.config.ensemble_n_workers, self.config.ensemble_size)
+            logger.info(f"Using parallel ensemble processing with {n_workers} workers")
 
-            # Create member metadata
-            member_metadata = {
-                "ensemble_member": i,
-                "ensemble_size": self.config.ensemble_size,
-                "random_seed": member_config.ensemble_random_seed,
-            }
-            if csv_path is not None:
-                member_metadata["csv_path"] = str(csv_path)
-            if metadata:
-                member_metadata.update(metadata)
+            # Submit all ensemble member tasks to process pool
+            with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
+                futures = []
+                for i, member_config in enumerate(ensemble_configs):
+                    future = executor.submit(
+                        _run_ensemble_member,
+                        member_index=i,
+                        member_config=member_config,
+                        band_data_dict=band_data_dict,
+                        metadata=metadata,
+                        csv_path=csv_path,
+                    )
+                    futures.append(future)
 
-            # Temporarily replace config and run reconstruction
-            original_config = self.config
-            self.config = member_config
-            try:
-                member_result = self._run_single_reconstruction(band_data_dict, member_metadata)
-                member_results.append(member_result)
-                ensemble_fluxes.append(member_result.flux)
-            finally:
-                self.config = original_config
+                # Collect results in order as they complete
+                member_results_unordered = []
+                for future in concurrent.futures.as_completed(futures):
+                    member_index, member_result = future.result()
+                    member_results_unordered.append((member_index, member_result))
+
+                # Sort results by member_index to ensure correct order
+                member_results_unordered.sort(key=lambda x: x[0])
+                member_results = [result for _, result in member_results_unordered]
+
+            # Extract fluxes from results
+            ensemble_fluxes = [result.flux for result in member_results]
+
+        else:
+            # Sequential processing (original behavior)
+            logger.info("Using sequential ensemble processing")
+            member_results = []
+            ensemble_fluxes = []
+
+            for i, member_config in enumerate(ensemble_configs):
+                logger.info(f"Running ensemble member {i + 1}/{self.config.ensemble_size}")
+
+                # Create member metadata
+                member_metadata = {
+                    "ensemble_member": i,
+                    "ensemble_size": self.config.ensemble_size,
+                    "random_seed": member_config.ensemble_random_seed,
+                }
+                if csv_path is not None:
+                    member_metadata["csv_path"] = str(csv_path)
+                if metadata:
+                    member_metadata.update(metadata)
+
+                # Temporarily replace config and run reconstruction
+                original_config = self.config
+                self.config = member_config
+                try:
+                    member_result = self._run_single_reconstruction(band_data_dict, member_metadata)
+                    member_results.append(member_result)
+                    ensemble_fluxes.append(member_result.flux)
+                finally:
+                    self.config = original_config
 
         # Convert to numpy array
         ensemble_fluxes = np.array(ensemble_fluxes)

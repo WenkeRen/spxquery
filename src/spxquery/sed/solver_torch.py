@@ -632,8 +632,9 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
             # Save initial model state and input noise as artifacts if enabled
             if config.wandb_save_model_artifacts:
-                import wandb
                 import json
+
+                import wandb
 
                 # Save initial model state
                 model_artifact = wandb.Artifact("model_initial", type="model")

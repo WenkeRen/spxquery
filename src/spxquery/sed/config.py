@@ -198,6 +198,9 @@ class SEDConfig:
     ensemble_random_seed: Optional[int] = None  # Base seed for reproducible ensemble generation
     ensemble_strategy: str = "independent"  # Ensembling approach (currently only "independent" supported)
     ensemble_save_members: bool = True  # Whether to save individual ensemble member results
+    ensemble_n_workers: Optional[int] = (
+        None  # Number of parallel workers for ensemble processing (None = sequential, 1 = sequential, >1 = parallel)
+    )
 
     def __post_init__(self):
         """Validate configuration parameters after initialization."""
@@ -332,6 +335,21 @@ class SEDConfig:
         valid_strategies = ["independent"]  # Will expand as more strategies are implemented
         if self.ensemble_strategy not in valid_strategies:
             raise ValueError(f"ensemble_strategy must be one of {valid_strategies}, got '{self.ensemble_strategy}'")
+
+        # Validate ensemble n_workers
+        if self.ensemble_n_workers is not None:
+            if self.ensemble_n_workers < 1:
+                raise ValueError(f"ensemble_n_workers must be >= 1 or None, got {self.ensemble_n_workers}")
+            # Warn if n_workers exceeds ensemble_size (extra workers won't be used)
+            if self.ensemble_n_workers > self.ensemble_size:
+                import warnings
+
+                warnings.warn(
+                    f"ensemble_n_workers ({self.ensemble_n_workers}) > ensemble_size ({self.ensemble_size}). "
+                    f"Only {self.ensemble_size} workers will be used effectively.",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
         # Warn about wandb conflicts for ensemble runs
         if self.ensemble_size > 1 and self.is_wandb_enabled():
@@ -479,6 +497,7 @@ class SEDConfig:
             "ensemble_size": self.ensemble_size,
             "ensemble_strategy": self.ensemble_strategy,
             "ensemble_save_members": self.ensemble_save_members,
+            "ensemble_n_workers": self.ensemble_n_workers,
         }
 
         # Handle wandb_run separately
