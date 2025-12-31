@@ -154,7 +154,7 @@ class SEDReconstructionResult:
         }
         log_path = logs_dir / "reconstruction.yaml"
         with open(log_path, "w") as f:
-            yaml.dump(log_data, f, default_flow_style=False, sort_keys=False)
+            yaml.safe_dump(log_data, f, default_flow_style=False, sort_keys=False)
         logger.info(f"Saved reconstruction log to {log_path}")
 
         logger.info(f"Complete SED reconstruction saved to {output_dir}")
@@ -435,7 +435,7 @@ class EnsembleResult:
         }
         log_path = logs_dir / "reconstruction.yaml"
         with open(log_path, "w") as f:
-            yaml.dump(log_data, f, default_flow_style=False, sort_keys=False)
+            yaml.safe_dump(log_data, f, default_flow_style=False, sort_keys=False)
         logger.info(f"Saved ensemble reconstruction log to {log_path}")
 
         logger.info(f"Complete ensemble reconstruction saved to {output_dir}")
