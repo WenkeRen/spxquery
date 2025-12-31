@@ -19,6 +19,29 @@ from .regularization import GaussianCWT
 logger = logging.getLogger(__name__)
 
 
+def _coo_spmv(
+    row_idx: torch.Tensor,
+    col_idx: torch.Tensor,
+    values: torch.Tensor,
+    x: torch.Tensor,
+    n_rows: int,
+) -> torch.Tensor:
+    """Sparse matrix-vector multiply for COO buffers.
+
+    Computes y = H @ x where H is represented by COO triplets (row_idx, col_idx, values).
+    This implementation is differentiable w.r.t. x and works on backends that lack
+    torch sparse ops (e.g., MPS).
+    """
+    if row_idx.dtype != torch.long:
+        row_idx = row_idx.long()
+    if col_idx.dtype != torch.long:
+        col_idx = col_idx.long()
+
+    y = torch.zeros(n_rows, device=x.device, dtype=x.dtype)
+    y.index_add_(0, row_idx, values.to(dtype=x.dtype) * x[col_idx])
+    return y
+
+
 def set_random_seed(seed: int):
     """
     Set random seeds for reproducible ensemble generation.
@@ -596,26 +619,29 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     device = torch.device(config.device if torch.backends.mps.is_available() or torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
-    # Check for MPS sparse limitations
-    # PyTorch on MPS often lacks sparse operations like mv / addmv
-    use_sparse_cpu_fallback = device.type == "mps"
-
-    if use_sparse_cpu_fallback:
+    # PyTorch MPS backend often lacks sparse ops (mv/addmv). Instead of CPU fallback (which
+    # causes per-epoch device sync), use a differentiable COO SpMV implemented with gather + index_add_.
+    use_coo_spmv = device.type == "mps"
+    if use_coo_spmv:
         logger.info(
-            "MPS detected: Falling back to CPU for sparse matrix operations to avoid 'aten::addmv_' NotImplementedError."
+            "MPS detected: using custom COO SpMV (gather + index_add_) to avoid sparse CPU fallback and device sync."
         )
-        sparse_device = torch.device("cpu")
+
+    # Move observation data and sparse components to the main device once (avoid per-epoch transfers)
+    H_indices = data.H_indices.to(device)
+    H_values = data.H_values.to(device)
+    observations = data.observations.to(device)
+    weights = data.weights.to(device)
+
+    # Prepare either a torch sparse tensor (CUDA/CPU) or COO buffers (MPS)
+    if use_coo_spmv:
+        H_row = H_indices[0].long()
+        H_col = H_indices[1].long()
+        H_val = H_values
+        n_obs = int(data.H_shape[0])
+        H_sparse = None
     else:
-        sparse_device = device
-
-    # Move sparse matrix components to sparse_device
-    H_indices = data.H_indices.to(sparse_device)
-    H_values = data.H_values.to(sparse_device)
-    observations = data.observations.to(sparse_device)
-    weights = data.weights.to(sparse_device)
-
-    # Construct sparse H tensor on sparse_device
-    H_sparse = torch.sparse_coo_tensor(H_indices, H_values, data.H_shape, device=sparse_device)
+        H_sparse = torch.sparse_coo_tensor(H_indices, H_values, data.H_shape, device=device)
 
     # Initialize model on main device (can be MPS)
     n_pixels = config.global_resolution
@@ -724,14 +750,11 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
         spectrum = model()  # (N,)
 
         # 1. Data Fidelity Loss
-        # If fallback is active, move spectrum to CPU for sparse MV
-        if use_sparse_cpu_fallback:
-            spectrum_for_mv = spectrum.to(sparse_device)
-        else:
-            spectrum_for_mv = spectrum
-
         # Compute predicted observations: y_pred = H @ spectrum
-        y_pred = torch.mv(H_sparse, spectrum_for_mv)
+        if use_coo_spmv:
+            y_pred = _coo_spmv(H_row, H_col, H_val, spectrum, n_obs)
+        else:
+            y_pred = torch.mv(H_sparse, spectrum)
 
         # Normalized weighted MSE: loss_data = sum( w * ((y - y_pred) / scale)^2 )
         diff = (observations - y_pred) / flux_scale
@@ -784,8 +807,7 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
         loss_reg = loss_reg * config.regularization_weight
 
         # Total Loss
-        # Move loss_data to main device to add with loss_reg
-        loss = loss_data.to(device) + loss_reg
+        loss = loss_data + loss_reg
 
         # Backward
         loss.backward()
