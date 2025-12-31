@@ -238,9 +238,11 @@ class SEDConfig:
             )
         if self.global_resolution <= 0:
             raise ValueError(f"global_resolution must be positive, got {self.global_resolution}")
-        if self.global_resolution > 10000:
-            raise ValueError(
-                f"global_resolution too large ({self.global_resolution}), may cause memory issues. Consider < 10000."
+        if self.global_resolution > 50000:
+            warnings.warn(
+                f"global_resolution too large ({self.global_resolution}), may cause memory issues. Consider < 50000.",
+                UserWarning,
+                stacklevel=2,
             )
 
         # Validate device
@@ -374,8 +376,10 @@ class SEDConfig:
         if self.ensemble_size < 1:
             raise ValueError(f"ensemble_size must be >= 1, got {self.ensemble_size}")
         if self.ensemble_size > 20:
-            raise ValueError(
-                f"ensemble_size ({self.ensemble_size}) is too large, may cause memory issues. Consider < 20."
+            warnings.warn(
+                f"ensemble_size ({self.ensemble_size}) is too large, may cause memory issues. Consider < 20.",
+                UserWarning,
+                stacklevel=2,
             )
 
         # Validate ensemble strategy
