@@ -1006,6 +1006,7 @@ def plot_sed_reconstruction_dashboard(
     output_path,
     dpi=300,
     title="SED Reconstruction Quality Assessment",
+    true_spectrum=None,
 ):
     """
     Create and save a comprehensive 4-row diagnostic dashboard for SED reconstruction.
@@ -1035,6 +1036,11 @@ def plot_sed_reconstruction_dashboard(
         Ignored for vector formats (PDF, SVG).
     title : str, optional
         Overall figure title. Default: "SED Reconstruction Quality Assessment".
+    true_spectrum : array_like, optional
+        Ground truth spectrum as a 2D array with shape (2, N).
+        First row: wavelength values (microns)
+        Second row: flux values (any units)
+        If provided, plotted as a thin purple line on rows 1 and 2 for comparison.
 
     Returns
     -------
@@ -1100,6 +1106,23 @@ def plot_sed_reconstruction_dashboard(
 
     # Row 1: Reconstructed spectrum with data (spans all 3 columns)
     ax1 = fig.add_subplot(gs[0, :])
+
+    # Plot true spectrum if provided
+    if true_spectrum is not None:
+        true_spectrum = np.asarray(true_spectrum)
+        true_wl = true_spectrum[0]
+        true_flux = true_spectrum[1]
+        ax1.plot(
+            true_wl,
+            true_flux,
+            ls="-",
+            color="purple",
+            linewidth=1,
+            alpha=0.7,
+            label="Truth Model",
+            zorder=1,
+        )
+
     plot_reconstructed_spectrum_with_data(
         ax1, wavelength, flux, band_data_dict, config, ensemble_std, validation_metrics
     )
@@ -1107,6 +1130,23 @@ def plot_sed_reconstruction_dashboard(
 
     # Row 2: Photometry comparison (spans all 3 columns)
     ax2 = fig.add_subplot(gs[1, :], sharex=ax1, sharey=ax1)
+
+    # Plot true spectrum if provided
+    if true_spectrum is not None:
+        true_spectrum = np.asarray(true_spectrum)
+        true_wl = true_spectrum[0]
+        true_flux = true_spectrum[1]
+        ax2.plot(
+            true_wl,
+            true_flux,
+            ls="-",
+            color="purple",
+            linewidth=1,
+            alpha=0.7,
+            label="Truth Model",
+            zorder=1,
+        )
+
     plot_photometry_comparison(ax2, band_data_dict, config, flux, wavelength=wavelength)
     ax2.set_title("Photometry Comparison: Observed vs Predicted", fontsize=13, fontweight="bold")
 

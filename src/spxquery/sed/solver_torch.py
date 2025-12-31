@@ -68,6 +68,22 @@ def cauchy_loss(x: torch.Tensor, gamma: float = 1.0) -> torch.Tensor:
     return torch.sum(torch.log(1 + (x / gamma) ** 2))
 
 
+def log_loss(x: torch.Tensor, epsilon: float = 1e-6) -> torch.Tensor:
+    """
+    Logarithmic loss function: sum(log(1 + |x|/epsilon)).
+
+    Similar to L1 but with sublinear growth for large values, providing
+    a balance between L1 and L2 regularization. The epsilon parameter
+    controls the transition point from linear (for small |x|) to logarithmic
+    behavior (for large |x|).
+
+    Behavior:
+    - Small |x| (|x| << epsilon): Approx |x|/epsilon -> L1-like
+    - Large |x| (|x| >> epsilon): Approx log(|x|/epsilon) -> Logarithmic growth
+    """
+    return torch.sum(torch.log(1 + torch.abs(x) / epsilon))
+
+
 def create_learning_rate_scheduler(optimizer, config: SEDConfig):
     """
     Create a learning rate scheduler based on configuration.
@@ -222,10 +238,14 @@ class SpectralUNet(nn.Module):
     Acts as a Deep Image Prior (Deep Spectral Prior).
     """
 
-    def __init__(self, in_channels: int = 1, out_channels: int = 1, base_filters: int = 32, depth: int = 3):
+    def __init__(
+        self, in_channels: int = 1, out_channels: int = 1, base_filters: int = 32, depth: int = 3, kernel_size: int = 5
+    ):
         super().__init__()
 
         self.depth = depth
+
+        padding = kernel_size // 2
 
         # Encoders
         self.encoders = nn.ModuleList()
@@ -234,9 +254,9 @@ class SpectralUNet(nn.Module):
         curr_filters = base_filters
         # Initial convolution
         self.initial_conv = nn.Sequential(
-            nn.Conv1d(in_channels, curr_filters, kernel_size=3, padding=1, padding_mode="reflect"),
+            nn.Conv1d(in_channels, curr_filters, kernel_size=kernel_size, padding=padding, padding_mode="reflect"),
             nn.LeakyReLU(0.2),
-            nn.Conv1d(curr_filters, curr_filters, kernel_size=3, padding=1, padding_mode="reflect"),
+            nn.Conv1d(curr_filters, curr_filters, kernel_size=kernel_size, padding=padding, padding_mode="reflect"),
             nn.LeakyReLU(0.2),
         )
 
@@ -248,9 +268,13 @@ class SpectralUNet(nn.Module):
             next_filters = curr_filters * 2
             self.encoders.append(
                 nn.Sequential(
-                    nn.Conv1d(curr_filters, next_filters, kernel_size=3, padding=1, padding_mode="reflect"),
+                    nn.Conv1d(
+                        curr_filters, next_filters, kernel_size=kernel_size, padding=padding, padding_mode="reflect"
+                    ),
                     nn.LeakyReLU(0.2),
-                    nn.Conv1d(next_filters, next_filters, kernel_size=3, padding=1, padding_mode="reflect"),
+                    nn.Conv1d(
+                        next_filters, next_filters, kernel_size=kernel_size, padding=padding, padding_mode="reflect"
+                    ),
                     nn.LeakyReLU(0.2),
                 )
             )
@@ -275,9 +299,13 @@ class SpectralUNet(nn.Module):
 
             self.decoders.append(
                 nn.Sequential(
-                    nn.Conv1d(curr_filters * 3, curr_filters, kernel_size=3, padding=1, padding_mode="reflect"),
+                    nn.Conv1d(
+                        curr_filters * 3, curr_filters, kernel_size=kernel_size, padding=padding, padding_mode="reflect"
+                    ),
                     nn.LeakyReLU(0.2),
-                    nn.Conv1d(curr_filters, curr_filters, kernel_size=3, padding=1, padding_mode="reflect"),
+                    nn.Conv1d(
+                        curr_filters, curr_filters, kernel_size=kernel_size, padding=padding, padding_mode="reflect"
+                    ),
                     nn.LeakyReLU(0.2),
                 )
             )
@@ -335,7 +363,13 @@ class SpectralModel(nn.Module):
 
     def __init__(self, n_pixels: int, config: SEDConfig):
         super().__init__()
-        self.net = SpectralUNet(in_channels=1, out_channels=1, base_filters=config.dip_filters, depth=config.dip_depth)
+        self.net = SpectralUNet(
+            in_channels=1,
+            out_channels=1,
+            base_filters=config.dip_filters,
+            depth=config.dip_depth,
+            kernel_size=config.dip_kernel_size,
+        )
         self.config = config
         self.n_pixels = n_pixels
 
@@ -677,17 +711,8 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
     pbar = tqdm(range(config.epochs), desc="Optimizing Spectrum")
 
-    # --- Self-Adaptive Parameters ---
-    # cauchy_k: Sensitivity factor (kappa).
-    # gamma = k * sigma_noise.
-    # Typically, k=3 means "preserve signals > 3 sigma".
-    # Since we are using flux_scale to normalize, we can use a simpler heuristic or dynamic estimation.
-    cauchy_k = 3.0
-
-    # [Protection] Safe floor for gamma during warmup and normal training
-    # During warmup, we use a much larger floor to be "forgiving".
-    warmup_gamma_floor = 0.1  # Very loose constraint (10% of flux) during warmup
-    normal_gamma_floor = 1e-4  # Tight constraint (numerical stability) after warmup
+    # Determine if adaptive parameters are needed (log and cauchy methods only)
+    use_adaptive = config.regularization_method in ["log", "cauchy"]
 
     for epoch in pbar:
         # Update jitter component based on current epoch
@@ -715,44 +740,47 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
         # 2. Regularization Loss (CWT Sparsity on Normalized Spectrum)
         # Normalize spectrum before applying CWT to maintain consistent regularization strength
         cwt_coeffs = cwt(spectrum / flux_scale_device)
+
+        # Set adaptive floor based on warmup phase (log and cauchy only)
+        if use_adaptive:
+            if epoch < config.learning_rate_warmup_epochs:
+                current_floor = torch.tensor(config.reg_warmup_floor, device=device)
+            else:
+                current_floor = torch.tensor(config.reg_normal_floor, device=device)
+
+        # Compute regularization loss per CWT scale
         loss_reg = 0.0
-        # for coeff in cwt_coeffs:
-        #     loss_reg += cauchy_loss(coeff, gamma=base_gamma)
-        # loss_reg += torch.sum(torch.abs(coeff))
-        # loss_reg += torch.sum(torch.log(1 + torch.abs(coeff) / 1e-6))
 
-        # --- Dynamic Noise Estimation (MAD) ---
-        # We estimate the 'noise level' of the current CWT scale dynamically.
-        # MAD is robust against the emission lines (outliers).
-        # Note: We use .detach() because we don't want to optimize the gamma itself.
-        # Determine Gamma Floor based on Epoch (Warmup Logic)
-        if epoch < config.learning_rate_warmup_epochs:
-            # During warmup, ensure gamma doesn't drop below a safe, large value.
-            # This prevents huge gradients from CWT noise early on.
-            current_gamma_floor = torch.tensor(warmup_gamma_floor, device=device)
+        if config.regularization_method == "absolute":
+            # Simple L1: no adaptive parameters needed
+            for coeff in cwt_coeffs:
+                loss_reg += torch.sum(torch.abs(coeff))
 
-            # Optional: Linear ramp-up of Reg Weight
-            # ramp_factor = epoch / config.learning_rate_warmup_epochs
-        else:
-            # After warmup, allow gamma to go low (be sensitive), just keeping numerical stability.
-            current_gamma_floor = torch.tensor(normal_gamma_floor, device=device)
-            # ramp_factor = 1.0
+        elif config.regularization_method == "log":
+            # Log-sum with adaptive epsilon
+            for coeff in cwt_coeffs:
+                with torch.no_grad():
+                    # MAD-based noise estimation (robust against outliers)
+                    mad_sigma = 1.4826 * torch.median(torch.abs(coeff - torch.median(coeff)))
+                    adaptive_epsilon = config.reg_sensitivity_factor * mad_sigma
+                    effective_epsilon = torch.max(adaptive_epsilon, current_floor)
 
-        for coeff in cwt_coeffs:
-            with torch.no_grad():
-                median_val = torch.median(coeff)
-                mad_sigma = 1.4826 * torch.median(torch.abs(coeff - median_val))
+                # Multiply by effective_epsilon to maintain consistent reg strength
+                loss_reg += effective_epsilon * log_loss(coeff, epsilon=effective_epsilon.item())
 
-                # Calculate target adaptive gamma
-                adaptive_gamma = cauchy_k * mad_sigma
+        elif config.regularization_method == "cauchy":
+            # Cauchy loss with adaptive gamma
+            for coeff in cwt_coeffs:
+                with torch.no_grad():
+                    # MAD-based noise estimation (robust against outliers)
+                    mad_sigma = 1.4826 * torch.median(torch.abs(coeff - torch.median(coeff)))
+                    adaptive_gamma = config.reg_sensitivity_factor * mad_sigma
+                    effective_gamma = torch.max(adaptive_gamma, current_floor)
 
-                # Apply Protection Floor
-                # During warmup, this will likely be dominated by `warmup_gamma_floor` (0.1)
-                # After warmup, this will be dominated by `adaptive_gamma` (actual noise)
-                effective_gamma = torch.max(adaptive_gamma, current_gamma_floor)
+                # Multiply by effective_gamma to maintain consistent reg strength
+                loss_reg += effective_gamma * cauchy_loss(coeff, gamma=effective_gamma.item())
 
-            loss_reg += cauchy_loss(coeff, gamma=effective_gamma)
-
+        # Apply regularization weight
         loss_reg = loss_reg * config.regularization_weight
 
         # Total Loss

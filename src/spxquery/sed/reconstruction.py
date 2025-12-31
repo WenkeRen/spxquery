@@ -57,6 +57,15 @@ def _run_ensemble_member(
     """
     logger.info(f"Running ensemble member {member_index + 1}/{member_config.ensemble_size}")
 
+    # Apply perturbation if enabled
+    if member_config.ensemble_perturb_observations:
+        logger.debug(f"Applying Gaussian perturbation to observations for ensemble member {member_index}")
+        # Create perturbed band data dictionary
+        perturbed_band_data_dict = {}
+        for band, band_data in band_data_dict.items():
+            perturbed_band_data_dict[band] = band_data.perturb_flux()
+        band_data_dict = perturbed_band_data_dict
+
     # Create member metadata
     member_metadata = {
         "ensemble_member": member_index,
@@ -286,6 +295,16 @@ class SEDReconstructor:
             for i, member_config in enumerate(ensemble_configs):
                 logger.info(f"Running ensemble member {i + 1}/{self.config.ensemble_size}")
 
+                # Apply perturbation if enabled (use original band_data_dict for each member)
+                member_band_data = band_data_dict
+                if member_config.ensemble_perturb_observations:
+                    logger.debug(f"Applying Gaussian perturbation to observations for ensemble member {i}")
+                    # Create perturbed band data dictionary
+                    perturbed_band_data_dict = {}
+                    for band, band_data in band_data_dict.items():
+                        perturbed_band_data_dict[band] = band_data.perturb_flux()
+                    member_band_data = perturbed_band_data_dict
+
                 # Create member metadata
                 member_metadata = {
                     "ensemble_member": i,
@@ -301,7 +320,7 @@ class SEDReconstructor:
                 original_config = self.config
                 self.config = member_config
                 try:
-                    member_result = self._run_single_reconstruction(band_data_dict, member_metadata)
+                    member_result = self._run_single_reconstruction(member_band_data, member_metadata)
                     member_results.append(member_result)
                     ensemble_fluxes.append(member_result.flux)
                 finally:
@@ -373,6 +392,13 @@ class SEDReconstructor:
         """
         Create configuration objects for each ensemble member.
 
+        This method creates specialized configurations for each ensemble member by:
+        - Setting ensemble_size=1 (each member is a single reconstruction)
+        - Setting unique random seeds for reproducible ensembles
+        - Disabling nested parallelism (ensemble_n_workers=None)
+        - Preserving ensemble_perturb_observations flag
+        - Disabling wandb for members 1+ to avoid logging conflicts
+
         Returns
         -------
         list[SEDConfig]
@@ -381,9 +407,11 @@ class SEDReconstructor:
         configs = []
 
         for i in range(self.config.ensemble_size):
-            # Create a copy of the current config
+            # Create a copy of the current config with ensemble-specific overrides
             member_config = self.config.copy_with_overrides(
                 ensemble_size=1,  # Each member runs as single reconstruction
+                ensemble_n_workers=None,  # Disable nested parallelism for ensemble members
+                # ensemble_perturb_observations is preserved from parent config
             )
 
             # Set random seed for reproducible ensembles

@@ -63,6 +63,9 @@ class SEDConfig:
         Number of filters in U-Net architecture. Default: 32.
     dip_depth : int
         Depth of U-Net architecture (number of downsampling stages). Default: 3.
+    dip_kernel_size : int
+        Convolution kernel size for U-Net (must be odd). Default: 5.
+        Larger kernels increase receptive field but also computational cost.
     dip_noise_jitter_initial_ratio : Optional[float]
         Initial jitter as ratio of dip_noise_std. Default: 0.3.
         None means no jitter is applied. 0.3 means jitter = 0.3 x dip_noise_std.
@@ -74,6 +77,20 @@ class SEDConfig:
         Weight for CWT regularization term. Default: 1.0.
     cwt_scales : List[float]
         Scales for Continuous Wavelet Transform regularization. Default: [1.0, 2.0, 3.0].
+    regularization_method : str
+        Regularization loss function for CWT sparsity. Options: 'absolute', 'log', 'cauchy'.
+        Default: 'cauchy'. 'absolute' uses simple L1 norm without adaptive parameters.
+        'log' and 'cauchy' use adaptive epsilon/gamma with warmup logic.
+    reg_sensitivity_factor : float
+        Sensitivity factor (kappa) for adaptive methods. For 'log': epsilon = k * sigma_noise.
+        For 'cauchy': gamma = k * sigma_noise. Default: 3.0. Higher values preserve more signal.
+        Only used for 'log' and 'cauchy' methods.
+    reg_warmup_floor : float
+        Minimum floor for epsilon/gamma during warmup phase (adaptive methods only).
+        Provides loose constraint to prevent large gradients early in training. Default: 0.1.
+    reg_normal_floor : float
+        Minimum floor for epsilon/gamma after warmup (adaptive methods only).
+        Provides numerical stability while allowing sensitivity to noise. Default: 1e-4.
     sigma_threshold : float
         Minimum SNR (flux/flux_error) for quality filtering.
         Measurements below this threshold are excluded. Default: 3.0.
@@ -154,6 +171,7 @@ class SEDConfig:
     dip_noise_std: float = 0.1
     dip_filters: int = 32
     dip_depth: int = 3
+    dip_kernel_size: int = 5  # Convolution kernel size for U-Net (must be odd)
 
     # Noise jittering parameters
     dip_noise_jitter_initial_ratio: Optional[float] = (
@@ -164,6 +182,12 @@ class SEDConfig:
     # Regularization (CWT)
     regularization_weight: float = 1.0
     cwt_scales: List[float] = field(default_factory=lambda: [1.0, 2.0, 3.0])
+
+    # Regularization method and adaptive parameters
+    regularization_method: str = "cauchy"  # Options: "absolute", "log", "cauchy"
+    reg_sensitivity_factor: float = 3.0  # k where epsilon/gamma = k * sigma_noise (log, cauchy only)
+    reg_warmup_floor: float = 0.1  # Loose constraint during warmup (log, cauchy only)
+    reg_normal_floor: float = 1e-4  # Tight constraint after warmup (log, cauchy only)
 
     # Quality control
     sigma_threshold: float = 3.0
@@ -200,6 +224,9 @@ class SEDConfig:
     ensemble_save_members: bool = True  # Whether to save individual ensemble member results
     ensemble_n_workers: Optional[int] = (
         None  # Number of parallel workers for ensemble processing (None = sequential, 1 = sequential, >1 = parallel)
+    )
+    ensemble_perturb_observations: bool = (
+        False  # Perturb observations with Gaussian noise during ensemble processing (default: False)
     )
 
     def __post_init__(self):
@@ -253,6 +280,10 @@ class SEDConfig:
             raise ValueError(f"dip_filters must be positive, got {self.dip_filters}")
         if self.dip_depth < 1 or self.dip_depth > 10:
             raise ValueError(f"dip_depth must be between 1 and 10, got {self.dip_depth}")
+        if self.dip_kernel_size < 1 or self.dip_kernel_size > 11:
+            raise ValueError(f"dip_kernel_size must be between 1 and 11, got {self.dip_kernel_size}")
+        if self.dip_kernel_size % 2 == 0:
+            raise ValueError(f"dip_kernel_size must be odd, got {self.dip_kernel_size}")
 
         # Validate noise jittering parameters
         if self.dip_noise_jitter_initial_ratio is not None:
@@ -280,6 +311,22 @@ class SEDConfig:
             raise ValueError("cwt_scales cannot be empty")
         if any(scale <= 0 for scale in self.cwt_scales):
             raise ValueError("All cwt_scales values must be positive")
+
+        # Validate regularization method
+        valid_methods = ["absolute", "log", "cauchy"]
+        if self.regularization_method not in valid_methods:
+            raise ValueError(
+                f"regularization_method must be one of {valid_methods}, got '{self.regularization_method}'"
+            )
+
+        # Validate adaptive parameters for log and cauchy methods
+        if self.regularization_method in ["log", "cauchy"]:
+            if self.reg_sensitivity_factor <= 0:
+                raise ValueError(f"reg_sensitivity_factor must be positive, got {self.reg_sensitivity_factor}")
+            if self.reg_warmup_floor < 0:
+                raise ValueError(f"reg_warmup_floor must be non-negative, got {self.reg_warmup_floor}")
+            if self.reg_normal_floor < 0:
+                raise ValueError(f"reg_normal_floor must be non-negative, got {self.reg_normal_floor}")
 
         # Validate quality control
         if self.sigma_threshold < 0:
@@ -475,10 +522,15 @@ class SEDConfig:
             "dip_noise_std": self.dip_noise_std,
             "dip_filters": self.dip_filters,
             "dip_depth": self.dip_depth,
+            "dip_kernel_size": self.dip_kernel_size,
             "dip_noise_jitter_initial_ratio": self.dip_noise_jitter_initial_ratio,
             "dip_noise_jitter_min_ratio": self.dip_noise_jitter_min_ratio,
             "regularization_weight": self.regularization_weight,
             "cwt_scales": self.cwt_scales,
+            "regularization_method": self.regularization_method,
+            "reg_sensitivity_factor": self.reg_sensitivity_factor,
+            "reg_warmup_floor": self.reg_warmup_floor,
+            "reg_normal_floor": self.reg_normal_floor,
             "sigma_threshold": self.sigma_threshold,
             "bad_flags": self.bad_flags,
             "enable_sigma_clip": self.enable_sigma_clip,
@@ -498,6 +550,7 @@ class SEDConfig:
             "ensemble_strategy": self.ensemble_strategy,
             "ensemble_save_members": self.ensemble_save_members,
             "ensemble_n_workers": self.ensemble_n_workers,
+            "ensemble_perturb_observations": self.ensemble_perturb_observations,
         }
 
         # Handle wandb_run separately

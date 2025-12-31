@@ -50,7 +50,9 @@ result = reconstructor.reconstruct_from_csv("lightcurve.csv")
 config = SEDConfig(
     epochs=3000,
     ensemble_size=5,  # Run 5 independent reconstructions
-    ensemble_random_seed=42  # For reproducible results
+    ensemble_random_seed=42,  # For reproducible results
+    ensemble_n_workers=4,  # Use 4 parallel workers for faster processing (optional)
+    ensemble_perturb_observations=True,  # Perturb observations to quantify measurement error uncertainties (optional)
 )
 reconstructor = SEDReconstructor(config)
 ensemble_result = reconstructor.reconstruct_from_csv("lightcurve.csv")
@@ -132,6 +134,15 @@ sed/
 - `ensemble_random_seed` (int): Base seed for reproducible ensemble generation (default: None)
 - `ensemble_strategy` (str): Ensembling approach (default: "independent")
 - `ensemble_save_members` (bool): Whether to save individual ensemble member results (default: True)
+- `ensemble_n_workers` (Optional[int]): Number of parallel workers for ensemble processing (default: None)
+  - None or 1: Sequential execution (original behavior)
+  - >1: Parallel execution using multiprocessing (faster for large ensembles)
+  - Recommended: Set to min(ensemble_size, CPU_count) for optimal performance
+- `ensemble_perturb_observations` (bool): Perturb observations with Gaussian noise during ensemble processing (default: False)
+  - When True, each ensemble member receives different perturbed observations: flux_perturbed = flux + N(0,1) * flux_error
+  - Useful for quantifying uncertainties due to measurement errors
+  - Validation metrics still use original (unperturbed) observations for fair comparison
+  - Each ensemble member generates independent noise (use with ensemble_random_seed for reproducibility)
 
 ### Weights & Biases Integration
 

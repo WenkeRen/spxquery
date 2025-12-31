@@ -185,6 +185,45 @@ class BandData:
 
         return band_data
 
+    def perturb_flux(self) -> "BandData":
+        """
+        Create a new BandData with perturbed flux values using Gaussian noise.
+
+        The perturbation is applied as: perturbed_flux = flux + noise * flux_error,
+        where noise is sampled from N(0, 1).
+
+        This is useful for ensemble processing to quantify uncertainties due to measurement errors.
+
+        Returns
+        -------
+        BandData
+            New BandData object with perturbed flux values (same flux_error, wavelength, bandwidth).
+
+        Notes
+        -----
+        - The original BandData object is not modified.
+        - Flux errors are used as the standard deviation for the noise.
+        - Each call generates different random noise (use with random_seed for reproducibility).
+        """
+        # Generate Gaussian noise: N(0, 1)
+        noise = np.random.normal(0, 1, size=self.flux.shape)
+
+        # Perturb flux: flux_perturbed = flux + noise * flux_error
+        perturbed_flux = self.flux + noise * self.flux_error
+
+        # Create new BandData with perturbed flux
+        perturbed_band_data = BandData(
+            band=self.band,
+            flux=perturbed_flux,
+            flux_error=self.flux_error,  # Keep original errors
+            wavelength_center=self.wavelength_center,
+            bandwidth=self.bandwidth,
+        )
+
+        logger.debug(f"Created perturbed BandData for {self.band} with {self.n_measurements} measurements")
+
+        return perturbed_band_data
+
 
 def load_lightcurve_csv(csv_path: Path) -> pd.DataFrame:
     """
