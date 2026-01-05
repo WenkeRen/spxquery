@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import warnings
+
 import yaml
 
 # SPHEREx detector wavelength ranges (microns) - hardcoded from mission specifications
@@ -229,6 +231,13 @@ class SEDConfig:
         False  # Perturb observations with Gaussian noise during ensemble processing (default: False)
     )
 
+    # Ensemble robustness controls (optional)
+    # These are designed to mitigate rare "hang" cases in parallel workers.
+    # Defaults preserve existing behavior (no timeout, no retries).
+    ensemble_member_timeout_seconds: Optional[float] = 300  # e.g. 300 for 5 minutes
+    ensemble_max_retries: int = 3  # retries per member on timeout/crash (0 = disabled)
+    ensemble_retry_backoff_seconds: float = 0.0  # sleep before retry (seconds)
+
     def __post_init__(self):
         """Validate configuration parameters after initialization."""
         # Validate global reconstruction parameters
@@ -401,6 +410,19 @@ class SEDConfig:
                     UserWarning,
                     stacklevel=2,
                 )
+
+        # Validate ensemble robustness controls
+        if self.ensemble_member_timeout_seconds is not None and self.ensemble_member_timeout_seconds <= 0:
+            raise ValueError(
+                "ensemble_member_timeout_seconds must be > 0 or None, "
+                f"got {self.ensemble_member_timeout_seconds}"
+            )
+        if self.ensemble_max_retries < 0:
+            raise ValueError(f"ensemble_max_retries must be >= 0, got {self.ensemble_max_retries}")
+        if self.ensemble_retry_backoff_seconds < 0:
+            raise ValueError(
+                f"ensemble_retry_backoff_seconds must be >= 0, got {self.ensemble_retry_backoff_seconds}"
+            )
 
         # Warn about wandb conflicts for ensemble runs
         if self.ensemble_size > 1 and self.is_wandb_enabled():

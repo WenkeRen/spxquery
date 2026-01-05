@@ -679,6 +679,10 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     logger.info(f"Data flux scale (MAD-based): {flux_scale.item():.4e}")
 
     # Model evolution tracking for convergence analysis
+    # NOTE: This is intended for wandb/diagnostics only. If wandb is not enabled,
+    # we avoid extra device->CPU sync and spectrum cloning.
+    wandb_enabled = config.is_wandb_enabled()
+    track_convergence = wandb_enabled and config.wandb_track_convergence
     previous_spectrum = None
     spectrum_changes = []
 
@@ -694,7 +698,7 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
         logger.info("EMA disabled")
 
     # Initialize wandb logging if enabled
-    if config.is_wandb_enabled():
+    if wandb_enabled:
         try:
             # Log initial configuration
             config.log_to_wandb(config.to_wandb_config())
@@ -830,8 +834,8 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
         # Logging and model evolution tracking
         current_loss = loss.item()
 
-        # Track model evolution for convergence analysis
-        if config.wandb_track_convergence and previous_spectrum is not None:
+        # Track model evolution for convergence analysis (wandb only)
+        if track_convergence and previous_spectrum is not None:
             # Calculate spectrum change metrics
             spectrum_cpu = spectrum.detach().cpu().numpy()
             prev_spectrum_cpu = previous_spectrum.cpu().numpy()
@@ -854,11 +858,14 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
                 }
             )
 
-        # Update previous spectrum
-        previous_spectrum = spectrum.detach().clone()
+        # Update previous spectrum only if it will be used
+        if track_convergence:
+            previous_spectrum = spectrum.detach().clone()
+        else:
+            previous_spectrum = None
 
-        # Wandb logging
-        if epoch % config.wandb_log_frequency == 0:
+        # Wandb logging (do not even prepare metrics / convert tensors if wandb is disabled)
+        if wandb_enabled and epoch % config.wandb_log_frequency == 0:
             # Get current learning rate for logging
             current_lr = optimizer.param_groups[0]["lr"]
 
@@ -872,7 +879,7 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
             }
 
             # Add convergence metrics if available
-            if config.wandb_track_convergence and spectrum_changes:
+            if track_convergence and spectrum_changes:
                 latest_change = spectrum_changes[-1]
                 metrics.update(
                     {
@@ -964,7 +971,7 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
     )
 
     # Final wandb logging and convergence analysis
-    if config.is_wandb_enabled():
+    if wandb_enabled:
         try:
             # Log final results
             final_metrics = {
@@ -995,7 +1002,7 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
                 final_metrics["ema_enabled"] = False
 
             # Add convergence analysis if tracking was enabled
-            if config.wandb_track_convergence and spectrum_changes:
+            if track_convergence and spectrum_changes:
                 # Compute convergence statistics
                 l1_changes = [change["l1_difference"] for change in spectrum_changes]
                 l2_changes = [change["l2_difference"] for change in spectrum_changes]
