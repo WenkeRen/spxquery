@@ -1120,7 +1120,7 @@ def plot_sed_reconstruction_dashboard(
             linewidth=1,
             alpha=0.7,
             label="Truth Model",
-            zorder=1,
+            zorder=8,
         )
 
     plot_reconstructed_spectrum_with_data(
@@ -1144,7 +1144,7 @@ def plot_sed_reconstruction_dashboard(
             linewidth=1,
             alpha=0.7,
             label="Truth Model",
-            zorder=1,
+            zorder=8,
         )
 
     plot_photometry_comparison(ax2, band_data_dict, config, flux, wavelength=wavelength)

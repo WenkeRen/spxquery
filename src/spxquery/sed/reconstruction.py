@@ -86,7 +86,7 @@ def _run_ensemble_member(
     tuple[int, SEDReconstructionResult]
         Tuple of (member_index, reconstruction_result) for ordered results.
     """
-    logger.info(f"Running ensemble member {member_index + 1}/{member_config.ensemble_size}")
+    logger.info(f"Running ensemble member {member_index + 1}")
 
     # Apply perturbation if enabled
     if member_config.ensemble_perturb_observations:
@@ -100,7 +100,7 @@ def _run_ensemble_member(
     # Create member metadata
     member_metadata = {
         "ensemble_member": member_index,
-        "ensemble_size": member_config.ensemble_size,
+        "ensemble_size": member_config.ensemble_size,  # TODO: always be 1 due to member configs, inconsistent to real value.
         "random_seed": member_config.ensemble_random_seed,
     }
     if csv_path is not None:
@@ -110,7 +110,11 @@ def _run_ensemble_member(
 
     # Create reconstructor with member config and run reconstruction
     reconstructor = SEDReconstructor(member_config)
-    member_result = reconstructor._run_single_reconstruction(band_data_dict, member_metadata)
+    # Get ensemble size from config for progress bar display
+    ensemble_total = member_config.ensemble_size  # TODO: inconsistent to real value.
+    member_result = reconstructor._run_single_reconstruction(
+        band_data_dict, member_metadata, ensemble_member=member_index, ensemble_total=ensemble_total
+    )
 
     return (member_index, member_result)
 
@@ -172,6 +176,8 @@ class SEDReconstructor:
         self,
         band_data_dict: Dict[str, BandData],
         metadata: Optional[Dict[str, any]] = None,
+        ensemble_member: Optional[int] = None,
+        ensemble_total: Optional[int] = None,
     ) -> SEDReconstructionResult:
         """
         Internal method to perform single SED reconstruction from BandData objects.
@@ -182,6 +188,10 @@ class SEDReconstructor:
             Dictionary mapping band names to BandData objects.
         metadata : Optional[Dict[str, any]]
             Additional metadata to include in results.
+        ensemble_member : Optional[int]
+            Ensemble member index (0-based) if running as part of ensemble.
+        ensemble_total : Optional[int]
+            Total number of ensemble members.
 
         Returns
         -------
@@ -195,7 +205,9 @@ class SEDReconstructor:
 
         # Solve using PyTorch Deep Image Prior
         logger.info("Starting PyTorch Deep Image Prior optimization...")
-        result_spectrum, solver_status, solver_time = solve_global_reconstruction(global_dataset, self.config)
+        result_spectrum, solver_status, solver_time = solve_global_reconstruction(
+            global_dataset, self.config, ensemble_member=ensemble_member, ensemble_total=ensemble_total
+        )
 
         # Assess reconstruction quality
         # Convert sparse matrix to scipy csr format for validation
@@ -429,7 +441,8 @@ class SEDReconstructor:
                             if info is not None:
                                 info["process"].join(timeout=5)
                             logger.error(
-                                f"Ensemble member {member_index + 1}/{self.config.ensemble_size} crashed: {err_repr}\n{tb}"
+                                f"Ensemble member {member_index + 1}/{self.config.ensemble_size} "
+                                f"crashed: {err_repr}\n{tb}"
                             )
                             _resubmit_or_raise(member_index, reason=f"exception: {err_repr}", attempt=attempt)
 
@@ -442,7 +455,8 @@ class SEDReconstructor:
                             proc.join(timeout=1)
                             running.pop(member_index, None)
                             logger.error(
-                                f"Ensemble member {member_index + 1}/{self.config.ensemble_size} exited with code {exitcode}"
+                                f"Ensemble member {member_index + 1}/{self.config.ensemble_size} "
+                                f"exited with code {exitcode}"
                             )
                             _resubmit_or_raise(member_index, reason=f"exitcode={exitcode}", attempt=attempt)
 
@@ -486,7 +500,9 @@ class SEDReconstructor:
                 original_config = self.config
                 self.config = member_config
                 try:
-                    member_result = self._run_single_reconstruction(member_band_data, member_metadata)
+                    member_result = self._run_single_reconstruction(
+                        member_band_data, member_metadata, ensemble_member=i, ensemble_total=self.config.ensemble_size
+                    )
                     member_results.append(member_result)
                     ensemble_fluxes.append(member_result.flux)
                 finally:

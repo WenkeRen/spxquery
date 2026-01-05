@@ -5,6 +5,7 @@ PyTorch solver for Deep Image Prior reconstruction.
 import logging
 import math
 import time
+from typing import Optional
 
 import numpy as np
 import torch
@@ -318,7 +319,8 @@ class SpectralUNet(nn.Module):
             # Convolution (input channels = prev_filters from upsample + prev_filters from skip = 2*prev_filters?? No)
             # Skip connection brings 'curr_filters' channels. Upsample brings 'prev_filters' (which is 2*curr).
             # So concatenation has 3 * curr_filters?
-            # Standard UNet: Encoder i outputs F filters. Decoder i takes F filters from upsample and F from skip. Total 2F.
+            # Standard UNet: Encoder i outputs F filters. Decoder i takes F filters from
+            # upsample and F from skip. Total 2F.
 
             self.decoders.append(
                 nn.Sequential(
@@ -593,7 +595,12 @@ class EMATracker:
         return l2_change
 
 
-def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
+def solve_global_reconstruction(
+    data: GlobalSpectralData,
+    config: SEDConfig,
+    ensemble_member: Optional[int] = None,
+    ensemble_total: Optional[int] = None,
+):
     """
     Solve for global spectrum using Deep Image Prior.
 
@@ -603,6 +610,10 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
         Global spectral observation data with sparse H matrix.
     config : SEDConfig
         Reconstruction configuration.
+    ensemble_member : Optional[int]
+        Ensemble member index (0-based) if running as part of ensemble.
+    ensemble_total : Optional[int]
+        Total number of ensemble members.
 
     Returns
     -------
@@ -739,7 +750,20 @@ def solve_global_reconstruction(data: GlobalSpectralData, config: SEDConfig):
 
             warnings.warn(f"Failed to initialize wandb logging: {e}", RuntimeWarning)
 
-    pbar = tqdm(range(config.epochs), desc="Optimizing Spectrum")
+    # Create progress bar with member-aware positioning for ensemble runs
+    if ensemble_member is not None and ensemble_total is not None:
+        # Ensemble mode: use position parameter to display separate bar for each member
+        position = ensemble_member
+        desc = f"Member {ensemble_member + 1}"
+        leave = True  # Keep completed member bars visible
+    else:
+        # Single reconstruction: use default behavior
+        position = None
+        desc = "Optimizing Spectrum"
+        leave = True
+
+    print(f"pbar position: {position}, desc: {desc}")
+    pbar = tqdm(range(config.epochs), desc=desc, position=position, leave=leave)
 
     # Determine if adaptive parameters are needed (log and cauchy methods only)
     use_adaptive = config.regularization_method in ["log", "cauchy"]
