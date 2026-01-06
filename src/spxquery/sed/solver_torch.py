@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from .config import SEDConfig
 from .data_structures import GlobalSpectralData
@@ -599,7 +599,9 @@ def solve_global_reconstruction(
     data: GlobalSpectralData,
     config: SEDConfig,
     ensemble_member: Optional[int] = None,
-    ensemble_total: Optional[int] = None,
+    progress: bool = True,
+    progress_queue=None,
+    progress_interval: int = 10,
 ):
     """
     Solve for global spectrum using Deep Image Prior.
@@ -612,8 +614,6 @@ def solve_global_reconstruction(
         Reconstruction configuration.
     ensemble_member : Optional[int]
         Ensemble member index (0-based) if running as part of ensemble.
-    ensemble_total : Optional[int]
-        Total number of ensemble members.
 
     Returns
     -------
@@ -750,25 +750,31 @@ def solve_global_reconstruction(
 
             warnings.warn(f"Failed to initialize wandb logging: {e}", RuntimeWarning)
 
-    # Create progress bar with member-aware positioning for ensemble runs
-    if ensemble_member is not None and ensemble_total is not None:
-        # Ensemble mode: use position parameter to display separate bar for each member
-        position = ensemble_member
-        desc = f"Member {ensemble_member + 1}"
-        leave = True  # Keep completed member bars visible
+    # Progress reporting options:
+    # - If progress_queue is provided, the worker will NOT create a tqdm instance.
+    #   Instead it will periodically push ("progress", member_index, epoch_done) to the queue.
+    # - Otherwise, use local tqdm if progress=True.
+    if progress_queue is not None:
+        epoch_iter = range(config.epochs)
+    elif progress:
+        # Single reconstruction: safe default.
+        # For ensemble members, prefer disabling progress and letting the parent track members.
+        if ensemble_member is not None:
+            position = ensemble_member
+            desc = f"Member {ensemble_member + 1}"
+            leave = True
+        else:
+            position = None
+            desc = "Optimizing Spectrum"
+            leave = True
+
+        epoch_iter = tqdm(range(config.epochs), desc=desc, position=position, leave=leave)
     else:
-        # Single reconstruction: use default behavior
-        position = None
-        desc = "Optimizing Spectrum"
-        leave = True
-
-    print(f"pbar position: {position}, desc: {desc}")
-    pbar = tqdm(range(config.epochs), desc=desc, position=position, leave=leave)
-
+        epoch_iter = range(config.epochs)
     # Determine if adaptive parameters are needed (log and cauchy methods only)
     use_adaptive = config.regularization_method in ["log", "cauchy"]
 
-    for epoch in pbar:
+    for epoch in epoch_iter:
         # Update jitter component based on current epoch
         model.update_jitter(epoch)
 
@@ -857,6 +863,23 @@ def solve_global_reconstruction(
 
         # Logging and model evolution tracking
         current_loss = loss.item()
+
+        # Parent-managed per-member progress (safe for notebooks + multiprocessing).
+        # Send a small postfix dict that can be rendered via tqdm.set_postfix() in the parent.
+        if progress_queue is not None and ensemble_member is not None:
+            if progress_interval <= 1 or epoch % progress_interval == 0 or epoch == config.epochs - 1:
+                try:
+                    current_lr = optimizer.param_groups[0]["lr"]
+                    postfix = {
+                        "Loss": f"{current_loss:.4e}",
+                        "Data": f"{loss_data.item():.4e}",
+                        "Reg": f"{loss_reg.item():.4e}",
+                        "LR": f"{current_lr:.2e}",
+                    }
+                    progress_queue.put_nowait(("progress", ensemble_member, epoch + 1, postfix))
+                except Exception:
+                    # Best-effort progress reporting; drop updates if queue is unavailable/full.
+                    pass
 
         # Track model evolution for convergence analysis (wandb only)
         if track_convergence and previous_spectrum is not None:
@@ -965,7 +988,9 @@ def solve_global_reconstruction(
                 "Reg": f"{loss_reg.item():.4e}",
                 "LR": f"{current_lr:.2e}",
             }
-            pbar.set_postfix(log_dict)
+            # Only update postfix if we're using tqdm.
+            if progress_queue is None and progress:
+                epoch_iter.set_postfix(log_dict)
 
     # End timing
     end_time = time.time()

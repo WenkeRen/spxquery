@@ -18,6 +18,7 @@ from typing import Dict, Optional, Union
 
 import numpy as np
 import scipy.sparse as sp
+from tqdm.auto import tqdm
 
 from .config import SEDConfig
 from .data_loader import BandData, load_all_bands
@@ -36,6 +37,7 @@ def _ensemble_worker_entry(
     band_data_dict: Dict[str, BandData],
     metadata: Optional[Dict[str, any]] = None,
     csv_path: Optional[Path] = None,
+    progress_interval: int = 10,
 ):
     """Run a single ensemble member in a dedicated subprocess.
 
@@ -49,6 +51,8 @@ def _ensemble_worker_entry(
             band_data_dict=band_data_dict,
             metadata=metadata,
             csv_path=csv_path,
+            progress_queue=result_queue,
+            progress_interval=progress_interval,
         )
         result_queue.put(("ok", idx, result))
     except Exception as e:
@@ -62,6 +66,8 @@ def _run_ensemble_member(
     band_data_dict: Dict[str, BandData],
     metadata: Optional[Dict[str, any]] = None,
     csv_path: Optional[Path] = None,
+    progress_queue=None,
+    progress_interval: int = 10,
 ) -> tuple[int, SEDReconstructionResult]:
     """
     Standalone function to run a single ensemble member reconstruction.
@@ -100,7 +106,7 @@ def _run_ensemble_member(
     # Create member metadata
     member_metadata = {
         "ensemble_member": member_index,
-        "ensemble_size": member_config.ensemble_size,  # TODO: always be 1 due to member configs, inconsistent to real value.
+        "ensemble_size": member_config.ensemble_size,
         "random_seed": member_config.ensemble_random_seed,
     }
     if csv_path is not None:
@@ -110,10 +116,12 @@ def _run_ensemble_member(
 
     # Create reconstructor with member config and run reconstruction
     reconstructor = SEDReconstructor(member_config)
-    # Get ensemble size from config for progress bar display
-    ensemble_total = member_config.ensemble_size  # TODO: inconsistent to real value.
     member_result = reconstructor._run_single_reconstruction(
-        band_data_dict, member_metadata, ensemble_member=member_index, ensemble_total=ensemble_total
+        band_data_dict,
+        member_metadata,
+        ensemble_member=member_index,
+        progress_queue=progress_queue,
+        progress_interval=progress_interval,
     )
 
     return (member_index, member_result)
@@ -177,7 +185,8 @@ class SEDReconstructor:
         band_data_dict: Dict[str, BandData],
         metadata: Optional[Dict[str, any]] = None,
         ensemble_member: Optional[int] = None,
-        ensemble_total: Optional[int] = None,
+        progress_queue=None,
+        progress_interval: int = 10,
     ) -> SEDReconstructionResult:
         """
         Internal method to perform single SED reconstruction from BandData objects.
@@ -190,8 +199,6 @@ class SEDReconstructor:
             Additional metadata to include in results.
         ensemble_member : Optional[int]
             Ensemble member index (0-based) if running as part of ensemble.
-        ensemble_total : Optional[int]
-            Total number of ensemble members.
 
         Returns
         -------
@@ -206,7 +213,13 @@ class SEDReconstructor:
         # Solve using PyTorch Deep Image Prior
         logger.info("Starting PyTorch Deep Image Prior optimization...")
         result_spectrum, solver_status, solver_time = solve_global_reconstruction(
-            global_dataset, self.config, ensemble_member=ensemble_member, ensemble_total=ensemble_total
+            global_dataset,
+            self.config,
+            ensemble_member=ensemble_member,
+            # If parent provides a queue, it owns rendering (one bar per member).
+            progress=(progress_queue is None),
+            progress_queue=progress_queue,
+            progress_interval=progress_interval,
         )
 
         # Assess reconstruction quality
@@ -302,12 +315,27 @@ class SEDReconstructor:
             n_workers = min(self.config.ensemble_n_workers, self.config.ensemble_size)
             logger.info(f"Using parallel ensemble processing with {n_workers} workers")
 
+            # Parent-rendered per-member progress bars. Workers report progress via queues.
+            progress_interval = 10
+            member_bars = [
+                tqdm(
+                    total=cfg.epochs,
+                    desc=f"Member {i + 1}",
+                    position=i,
+                    leave=True,
+                )
+                for i, cfg in enumerate(ensemble_configs)
+            ]
+
             enable_watchdog = (
                 self.config.ensemble_member_timeout_seconds is not None or self.config.ensemble_max_retries > 0
             )
 
             if not enable_watchdog:
                 # Default behavior: ProcessPoolExecutor
+                ctx = mp.get_context("spawn")
+                progress_queue = ctx.Queue()
+
                 with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
                     futures = []
                     for i, member_config in enumerate(ensemble_configs):
@@ -318,14 +346,44 @@ class SEDReconstructor:
                             band_data_dict=band_data_dict,
                             metadata=metadata,
                             csv_path=csv_path,
+                            progress_queue=progress_queue,
+                            progress_interval=progress_interval,
                         )
                         futures.append(future)
 
-                    # Collect results in order as they complete
                     member_results_unordered = []
-                    for future in concurrent.futures.as_completed(futures):
-                        member_index, member_result = future.result()
-                        member_results_unordered.append((member_index, member_result))
+                    pending_futures = set(futures)
+                    while pending_futures:
+                        # Drain progress updates
+                        try:
+                            while True:
+                                msg = progress_queue.get_nowait()
+                                if not msg:
+                                    continue
+                                kind = msg[0]
+                                if kind == "progress":
+                                    # Backward compatible: ("progress", idx, epoch_done) or ("progress", idx, epoch_done, postfix)
+                                    member_index = msg[1]
+                                    epoch_done = msg[2]
+                                    postfix = msg[3] if len(msg) > 3 else None
+
+                                    bar = member_bars[member_index]
+                                    if epoch_done > bar.n:
+                                        bar.n = epoch_done
+                                    if postfix is not None:
+                                        bar.set_postfix(postfix, refresh=False)
+                                    bar.refresh()
+                        except Exception:
+                            pass
+
+                        done, pending_futures = concurrent.futures.wait(
+                            pending_futures,
+                            timeout=0.1,
+                            return_when=concurrent.futures.FIRST_COMPLETED,
+                        )
+                        for fut in done:
+                            member_index, member_result = fut.result()
+                            member_results_unordered.append((member_index, member_result))
 
                     # Sort results by member_index to ensure correct order
                     member_results_unordered.sort(key=lambda x: x[0])
@@ -366,6 +424,7 @@ class SEDReconstructor:
                             band_data_dict,
                             metadata,
                             csv_path,
+                            progress_interval,
                         ),
                     )
                     proc.start()
@@ -428,6 +487,18 @@ class SEDReconstructor:
 
                     if msg is not None:
                         kind = msg[0]
+                        if kind == "progress":
+                            # Backward compatible: ("progress", idx, epoch_done) or ("progress", idx, epoch_done, postfix)
+                            member_index = msg[1]
+                            epoch_done = msg[2]
+                            postfix = msg[3] if len(msg) > 3 else None
+                            bar = member_bars[member_index]
+                            if epoch_done > bar.n:
+                                bar.n = epoch_done
+                            if postfix is not None:
+                                bar.set_postfix(postfix, refresh=False)
+                            bar.refresh()
+                            continue
                         if kind == "ok":
                             _, member_index, member_result = msg
                             info = running.pop(member_index, None)
@@ -462,6 +533,9 @@ class SEDReconstructor:
 
                 # Order results
                 member_results = [completed[i] for i in range(self.config.ensemble_size)]
+
+            for bar in member_bars:
+                bar.close()
 
             # Extract fluxes from results
             ensemble_fluxes = [result.flux for result in member_results]
@@ -501,7 +575,7 @@ class SEDReconstructor:
                 self.config = member_config
                 try:
                     member_result = self._run_single_reconstruction(
-                        member_band_data, member_metadata, ensemble_member=i, ensemble_total=self.config.ensemble_size
+                        member_band_data, member_metadata, ensemble_member=i
                     )
                     member_results.append(member_result)
                     ensemble_fluxes.append(member_result.flux)
