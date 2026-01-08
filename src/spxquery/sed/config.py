@@ -238,6 +238,13 @@ class SEDConfig:
     ensemble_max_retries: int = 3  # retries per member on timeout/crash (0 = disabled)
     ensemble_retry_backoff_seconds: float = 0.0  # sleep before retry (seconds)
 
+    # Early stopping parameters (dual-criteria: chi2 + normality test)
+    enable_early_stopping: bool = False  # Enable/disable early stopping
+    early_stop_check_steps: int = 50  # Check early stopping criteria every N epochs (after warmup)
+    early_stop_cooldown_epoch: int = 300  # Number of cooldown epochs to run at the end (jump to last N epochs)
+    early_stop_target_chi2: float = 1.05  # Target chi2 threshold for perfect early stop
+    early_stop_lowest_chi2: float = 0.85  # Lowest chi2 threshold for force early stop (regardless of p-value)
+
     def __post_init__(self):
         """Validate configuration parameters after initialization."""
         # Validate global reconstruction parameters
@@ -434,6 +441,32 @@ class SEDConfig:
                 stacklevel=2,
             )
 
+        # Validate early stopping parameters
+        if self.enable_early_stopping:
+            if self.early_stop_check_steps <= 0:
+                raise ValueError(f"early_stop_check_steps must be positive, got {self.early_stop_check_steps}")
+            if self.early_stop_cooldown_epoch >= self.epochs:
+                raise ValueError(
+                    f"early_stop_cooldown_epoch ({self.early_stop_cooldown_epoch}) must be less than epochs ({self.epochs})"
+                )
+            # Ensure there's enough room for early stopping to actually trigger
+            # Earliest possible trigger = warmup_end + check_steps
+            # Cooldown starts at epochs - cooldown_epoch
+            warmup_end = self.learning_rate_warmup_epochs
+            earliest_check = warmup_end + self.early_stop_check_steps
+            cooldown_start = self.epochs - self.early_stop_cooldown_epoch
+            if earliest_check >= cooldown_start:
+                raise ValueError(
+                    f"Insufficient epochs for early stopping: warmup ends at {warmup_end}, "
+                    f"cooldown starts at {cooldown_start}, but first check is at {earliest_check}. "
+                    f"Reduce learning_rate_warmup_epochs or early_stop_cooldown_epoch."
+                )
+            if self.early_stop_lowest_chi2 >= self.early_stop_target_chi2:
+                raise ValueError(
+                    f"early_stop_lowest_chi2 ({self.early_stop_lowest_chi2}) must be less than "
+                    f"early_stop_target_chi2 ({self.early_stop_target_chi2})"
+                )
+
     def is_wandb_enabled(self) -> bool:
         """
         Check if wandb logging is enabled.
@@ -577,6 +610,11 @@ class SEDConfig:
             "ensemble_save_members": self.ensemble_save_members,
             "ensemble_n_workers": self.ensemble_n_workers,
             "ensemble_perturb_observations": self.ensemble_perturb_observations,
+            "enable_early_stopping": self.enable_early_stopping,
+            "early_stop_check_steps": self.early_stop_check_steps,
+            "early_stop_cooldown_epoch": self.early_stop_cooldown_epoch,
+            "early_stop_target_chi2": self.early_stop_target_chi2,
+            "early_stop_lowest_chi2": self.early_stop_lowest_chi2,
         }
 
         # Handle wandb_run separately

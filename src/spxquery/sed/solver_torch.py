@@ -5,7 +5,7 @@ PyTorch solver for Deep Image Prior reconstruction.
 import logging
 import math
 import time
-from typing import Optional
+from typing import Dict, Optional
 
 import numpy as np
 import torch
@@ -595,6 +595,69 @@ class EMATracker:
         return l2_change
 
 
+def _compute_chi_squared_per_obs(residuals: torch.Tensor, weights: torch.Tensor) -> float:
+    """
+    Compute unnormalized chi-squared per observation.
+
+    Computes chi2 to match validation.py: sum((weights * residuals)^2) / n_obs
+
+    Parameters
+    ----------
+    residuals : torch.Tensor
+        UNNORMALIZED residuals (observations - predictions), shape (n_obs,).
+    weights : torch.Tensor
+        Observation weights, shape (n_obs,).
+
+    Returns
+    -------
+    float
+        Chi-squared per observation: sum((weights * residuals)^2) / n_obs
+    """
+    # Compute weighted residuals first, then square (matches validation.py)
+    weighted_residuals = weights * residuals
+    chi_squared = torch.sum(weighted_residuals**2).item()
+    n_obs = residuals.shape[0]
+    return chi_squared / n_obs
+
+
+def _compute_normality_pvalue(residuals: torch.Tensor) -> float:
+    """
+    Compute normality test p-value using scipy statistical tests.
+
+    Uses Shapiro-Wilk test for N < 5000, otherwise uses D'Agostino's normaltest.
+    High p-values (> 0.05) indicate residuals are normally distributed.
+
+    Parameters
+    ----------
+    residuals : torch.Tensor
+        Residuals (observations - predictions), shape (n_obs,).
+        Will be converted to numpy array for scipy functions.
+
+    Returns
+    -------
+    float
+        P-value from normality test. Returns 0.0 if test fails.
+    """
+    from scipy.stats import normaltest, shapiro
+
+    # Convert to numpy (detaches from computation graph)
+    residuals_np = residuals.detach().cpu().numpy()
+
+    try:
+        # Use Shapiro-Wilk for small samples, normaltest for larger
+        if len(residuals_np) < 5000:
+            _, pvalue = shapiro(residuals_np)
+        else:
+            _, pvalue = normaltest(residuals_np)
+        return float(pvalue)
+    except Exception as e:
+        # If normality test fails, log warning and return 0.0
+        import warnings
+
+        warnings.warn(f"Normality test failed: {e}", RuntimeWarning)
+        return 0.0
+
+
 def solve_global_reconstruction(
     data: GlobalSpectralData,
     config: SEDConfig,
@@ -770,11 +833,45 @@ def solve_global_reconstruction(
 
         epoch_iter = tqdm(range(config.epochs), desc=desc, position=position, leave=leave)
     else:
-        epoch_iter = range(config.epochs)
+        epoch_iter = iter(range(config.epochs))  # Convert to iterator for next() calls
     # Determine if adaptive parameters are needed (log and cauchy methods only)
     use_adaptive = config.regularization_method in ["log", "cauchy"]
 
+    # Initialize early stopping info
+    early_stop_info: Dict[str, any] = {
+        "status": None,  # "PES", "FES", or None
+        "trigger_epoch": None,
+        "chi2": None,
+        "pvalue": None,
+    }
+
+    # Initialize cached chi2 value for progress bar (computed only during early stopping checks)
+    chi2_per_obs_cached = float("inf")  # Start with infinity (will be updated on first check)
+    pvalue_normality_cached = 0.0
+
+    # Track cooldown phase for early stopping
+    in_cooldown_phase = False  # Flag to indicate we're in cooldown phase
+    cooldown_start_epoch = None  # When cooldown phase started (for breaking after N epochs)
+
     for epoch in epoch_iter:
+        # Skip training during the gap between early stopping trigger and cooldown phase
+        if in_cooldown_phase and cooldown_start_epoch is not None and epoch < cooldown_start_epoch:
+            # Advance scheduler to keep LR in sync
+            if scheduler is not None:
+                scheduler.step()
+            continue  # Skip this epoch without training
+
+        # Check if cooldown phase is complete (early stopping)
+        if in_cooldown_phase and cooldown_start_epoch is not None and epoch >= cooldown_start_epoch:
+            epochs_in_cooldown = epoch - cooldown_start_epoch + 1  # +1 because current epoch counts
+            if epochs_in_cooldown > config.early_stop_cooldown_epoch:
+                logger.info(
+                    f"Cooldown phase complete at epoch {epoch} "
+                    f"({epochs_in_cooldown - 1} cooldown epochs run). "
+                    f"Early stopping: {early_stop_info['status']} at epoch {early_stop_info['trigger_epoch']}"
+                )
+                break
+
         # Update jitter component based on current epoch
         model.update_jitter(epoch)
 
@@ -861,6 +958,67 @@ def solve_global_reconstruction(
         if scheduler is not None:
             scheduler.step()
 
+        # Early stopping check (after warmup, every N epochs)
+        if (
+            config.enable_early_stopping
+            and epoch >= config.learning_rate_warmup_epochs
+            and epoch % config.early_stop_check_steps == 0
+            and early_stop_info["status"] is None  # Only check if not already triggered
+        ):
+            # Compute raw residuals (not scaled) to match validation.py chi2 calculation
+            # validation.py computes: chi2 = sum((weights * (y - H@spectrum))^2) / n_obs
+            residuals_raw = observations - y_pred
+
+            # Calculate chi-squared per observation (matches validation.py formula)
+            chi2 = _compute_chi_squared_per_obs(residuals_raw, weights)
+
+            # Update cached chi2 for progress bar display
+            chi2_per_obs_cached = chi2
+
+            # Calculate normality test p-value (use raw residuals)
+            pvalue = _compute_normality_pvalue(residuals_raw)
+
+            # Update cached pvalue for progress bar display
+            pvalue_normality_cached = pvalue
+
+            # Check perfect early stop criteria (chi2 < target AND pvalue > 0.05)
+            if chi2 < config.early_stop_target_chi2 and pvalue > 0.05:
+                early_stop_info["status"] = "PES"
+                early_stop_info["trigger_epoch"] = epoch
+                early_stop_info["chi2"] = chi2
+                early_stop_info["pvalue"] = pvalue
+
+                cooldown_start_epoch = config.epochs - config.early_stop_cooldown_epoch
+
+                logger.info(
+                    f"Perfect Early Stop (PES) triggered at epoch {epoch}: "
+                    f"chi2={chi2:.3f} (target={config.early_stop_target_chi2}), "
+                    f"pvalue={pvalue:.3f}. Entering cooldown phase: "
+                    f"{cooldown_start_epoch} → {config.epochs} ({config.early_stop_cooldown_epoch} epochs)"
+                )
+
+                # Set cooldown flag (epochs between now and cooldown_start will be skipped)
+                in_cooldown_phase = True
+
+            # Check force early stop criteria (chi2 < lowest, regardless of pvalue)
+            elif chi2 < config.early_stop_lowest_chi2:
+                early_stop_info["status"] = "FES"
+                early_stop_info["trigger_epoch"] = epoch
+                early_stop_info["chi2"] = chi2
+                early_stop_info["pvalue"] = pvalue
+
+                cooldown_start_epoch = config.epochs - config.early_stop_cooldown_epoch
+
+                logger.info(
+                    f"Force Early Stop (FES) triggered at epoch {epoch}: "
+                    f"chi2={chi2:.3f} (lowest={config.early_stop_lowest_chi2}). "
+                    f"Entering cooldown phase: {cooldown_start_epoch} → {config.epochs} "
+                    f"({config.early_stop_cooldown_epoch} epochs)"
+                )
+
+                # Set cooldown flag (epochs between now and cooldown_start will be skipped)
+                in_cooldown_phase = True
+
         # Logging and model evolution tracking
         current_loss = loss.item()
 
@@ -871,11 +1029,14 @@ def solve_global_reconstruction(
                 try:
                     current_lr = optimizer.param_groups[0]["lr"]
                     postfix = {
-                        "Loss": f"{current_loss:.4e}",
-                        "Data": f"{loss_data.item():.4e}",
-                        "Reg": f"{loss_reg.item():.4e}",
+                        "Loss": f"{current_loss:.3e}",
+                        "Reg": f"{loss_reg.item():.3e}",
                         "LR": f"{current_lr:.2e}",
+                        "Chi2": f"{chi2_per_obs_cached:.3f}",
+                        "Pval": f"{pvalue_normality_cached:.2f}",
                     }
+                    if early_stop_info["status"] is not None:
+                        postfix["ES"] = early_stop_info["status"]
                     progress_queue.put_nowait(("progress", ensemble_member, epoch + 1, postfix))
                 except Exception:
                     # Best-effort progress reporting; drop updates if queue is unavailable/full.
@@ -983,11 +1144,15 @@ def solve_global_reconstruction(
         if epoch % 100 == 0:
             current_lr = optimizer.param_groups[0]["lr"]
             log_dict = {
-                "Loss": f"{current_loss:.4e}",
-                "Data": f"{loss_data.item():.4e}",
-                "Reg": f"{loss_reg.item():.4e}",
+                "Loss": f"{current_loss:.3e}",
+                "Reg": f"{loss_reg.item():.3e}",
                 "LR": f"{current_lr:.2e}",
+                "Chi2": f"{chi2_per_obs_cached:.3f}",
+                "Pval": f"{pvalue_normality_cached:.2f}",
             }
+            # Add early stopping status to progress bar if triggered
+            if early_stop_info["status"] is not None:
+                log_dict["ES"] = early_stop_info["status"]
             # Only update postfix if we're using tqdm.
             if progress_queue is None and progress:
                 epoch_iter.set_postfix(log_dict)
@@ -1118,4 +1283,11 @@ def solve_global_reconstruction(
 
             warnings.warn(f"Failed to log final results to wandb: {e}", RuntimeWarning)
 
-    return final_spectrum.cpu(), solver_status, solver_time
+    # Log early stopping status if triggered
+    if early_stop_info["status"] is not None:
+        logger.info(
+            f"Early stopping completed: {early_stop_info['status']} at epoch {early_stop_info['trigger_epoch']}, "
+            f"chi2={early_stop_info['chi2']:.3f}, pvalue={early_stop_info['pvalue']:.3f}"
+        )
+
+    return final_spectrum.cpu(), solver_status, solver_time, early_stop_info

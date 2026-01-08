@@ -5,7 +5,7 @@ Data structures for SED reconstruction.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -84,6 +84,10 @@ class SEDReconstructionResult:
     validation_metrics: ValidationMetrics
     metadata: Dict[str, any]
     band_data: Dict[str, BandData]
+    early_stop_status: Optional[str] = None  # Early stopping status: "PES", "FES", or None
+    early_stop_epoch: Optional[int] = None  # Epoch when early stop was triggered
+    early_stop_chi2: Optional[float] = None  # Chi-squared value at early stop trigger
+    early_stop_pvalue: Optional[float] = None  # Normality test p-value at early stop trigger
 
     def save_all(self, output_dir: Union[str, Path]) -> None:
         """
@@ -152,6 +156,16 @@ class SEDReconstructionResult:
             "solver_time": self.solver_time,
             "metadata": self.metadata,
         }
+
+        # Add early stopping information if available
+        if self.early_stop_status is not None:
+            log_data["early_stopping"] = {
+                "status": self.early_stop_status,
+                "trigger_epoch": self.early_stop_epoch,
+                "chi_squared": self.early_stop_chi2,
+                "normality_pvalue": self.early_stop_pvalue,
+            }
+
         log_path = logs_dir / "reconstruction.yaml"
         with open(log_path, "w") as f:
             yaml.safe_dump(log_data, f, default_flow_style=False, sort_keys=False)
@@ -264,6 +278,10 @@ class SEDReconstructionResult:
             "solver_status": self.solver_status,
             "solver_time": self.solver_time,
             "metadata": self.metadata,
+            "early_stop_status": self.early_stop_status,
+            "early_stop_epoch": self.early_stop_epoch,
+            "early_stop_chi2": self.early_stop_chi2,
+            "early_stop_pvalue": self.early_stop_pvalue,
         }
 
 

@@ -212,7 +212,7 @@ class SEDReconstructor:
 
         # Solve using PyTorch Deep Image Prior
         logger.info("Starting PyTorch Deep Image Prior optimization...")
-        result_spectrum, solver_status, solver_time = solve_global_reconstruction(
+        result_spectrum, solver_status, solver_time, early_stop_info = solve_global_reconstruction(
             global_dataset,
             self.config,
             ensemble_member=ensemble_member,
@@ -271,6 +271,10 @@ class SEDReconstructor:
             validation_metrics=validation_metrics,
             metadata=reconstruction_metadata,
             band_data=band_data_dict,
+            early_stop_status=early_stop_info["status"],
+            early_stop_epoch=early_stop_info["trigger_epoch"],
+            early_stop_chi2=early_stop_info["chi2"],
+            early_stop_pvalue=early_stop_info["pvalue"],
         )
 
         logger.info(
@@ -448,6 +452,11 @@ class SEDReconstructor:
                             f"Retrying ensemble member {member_index + 1}/{self.config.ensemble_size} "
                             f"(attempt {attempt + 1}/{max_retries}) after {reason}"
                         )
+                        # Reset progress bar for the retried member
+                        bar = member_bars[member_index]
+                        bar.n = 0
+                        bar.last_print_n = 0
+                        bar.refresh()
                         pending.appendleft(next_job)
                     else:
                         raise TimeoutError(
