@@ -228,7 +228,7 @@ class SEDConfig:
         None  # Number of parallel workers for ensemble processing (None = sequential, 1 = sequential, >1 = parallel)
     )
     ensemble_perturb_observations: bool = (
-        False  # Perturb observations with Gaussian noise during ensemble processing (default: False)
+        False  # DEPRECATED: Perturb observations with Gaussian noise during ensemble processing. This feature is ineffective and will be removed in a future version.
     )
 
     # Ensemble robustness controls (optional)
@@ -429,6 +429,18 @@ class SEDConfig:
         if self.ensemble_retry_backoff_seconds < 0:
             raise ValueError(
                 f"ensemble_retry_backoff_seconds must be >= 0, got {self.ensemble_retry_backoff_seconds}"
+            )
+
+        # Deprecation warning for perturb method
+        if self.ensemble_perturb_observations:
+            import warnings
+
+            warnings.warn(
+                "The 'ensemble_perturb_observations' parameter is deprecated and will be removed in a future version. "
+                "This feature has been found to be ineffective and may produce misleading results. "
+                "Please set ensemble_perturb_observations=False (default).",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
         # Warn about wandb conflicts for ensemble runs
