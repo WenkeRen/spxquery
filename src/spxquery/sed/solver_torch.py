@@ -817,6 +817,10 @@ def solve_global_reconstruction(
     # - If progress_queue is provided, the worker will NOT create a tqdm instance.
     #   Instead it will periodically push ("progress", member_index, epoch_done) to the queue.
     # - Otherwise, use local tqdm if progress=True.
+
+    # Calculate total epochs for progress bar (Phase 1 + Phase 2 if SGLD enabled)
+    total_epochs = config.epochs + (config.sgld_epochs if config.enable_sgld else 0)
+
     if progress_queue is not None:
         epoch_iter = range(config.epochs)
     elif progress:
@@ -828,10 +832,11 @@ def solve_global_reconstruction(
             leave = True
         else:
             position = None
-            desc = "Optimizing Spectrum"
+            desc = "Phase 1: MAP Optimization" if config.enable_sgld else "Optimizing Spectrum"
             leave = True
 
-        epoch_iter = tqdm(range(config.epochs), desc=desc, position=position, leave=leave)
+        # Create progress bar with total epochs (both phases if SGLD enabled)
+        epoch_iter = tqdm(range(total_epochs), desc=desc, position=position, leave=leave)
     else:
         epoch_iter = iter(range(config.epochs))  # Convert to iterator for next() calls
     # Determine if adaptive parameters are needed (log and cauchy methods only)
@@ -1141,7 +1146,7 @@ def solve_global_reconstruction(
                 config.log_spectrum_data_to_wandb(spectrum_cpu, wavelength_cpu, epoch, data_type="spectrum")
 
         # Progress bar logging (existing functionality)
-        if epoch % 100 == 0:
+        if epoch % progress_interval == 0:
             current_lr = optimizer.param_groups[0]["lr"]
             log_dict = {
                 "Loss": f"{current_loss:.3e}",
@@ -1157,32 +1162,322 @@ def solve_global_reconstruction(
             if progress_queue is None and progress:
                 epoch_iter.set_postfix(log_dict)
 
-    # End timing
-    end_time = time.time()
-    solver_time = end_time - start_time
+    # End of Phase 1
+    phase1_epochs_completed = epoch + 1
+    logger.info(f"Phase 1 complete: {phase1_epochs_completed} epochs")
 
     # Get final spectrum, preferring EMA if available and active
     if ema_tracker is not None and ema_tracker.is_initialized:
         ema_spectrum = ema_tracker.get_ema_spectrum()
         if ema_spectrum is not None:
-            final_spectrum = ema_spectrum
+            best_fit_spectrum = ema_spectrum
             logger.info("Using EMA-smoothed spectrum as final result")
         else:
-            final_spectrum = model.forward_fixed_noise().detach()
+            best_fit_spectrum = model.forward_fixed_noise().detach()
             logger.warning("EMA tracker initialized but no EMA spectrum available, using fixed noise spectrum")
     else:
-        final_spectrum = model.forward_fixed_noise().detach()
+        best_fit_spectrum = model.forward_fixed_noise().detach()
         if ema_tracker is not None:
             logger.info(
                 f"EMA tracker did not initialize (completed epochs: {config.epochs}, start_epoch: {ema_start_epoch})"
             )
 
+    # ========== PHASE 2: SGLD SAMPLING (Uncertainty Quantification) ==========
+    sgld_samples = []
+    sgld_mean = None
+    sgld_std = None
+
+    if config.enable_sgld:
+        logger.info(
+            f"Starting Phase 2: SGLD Sampling (total {config.sgld_epochs} epochs: "
+            f"{config.sgld_burnin_epochs} burn-in + "
+            f"{config.sgld_epochs - config.sgld_burnin_epochs} sampling)"
+        )
+
+        # Set fixed learning rate for SGLD
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = config.sgld_lr
+
+        logger.info(f"SGLD learning rate set to {config.sgld_lr:.2e}")
+
+        # Update progress bar description for Phase 2
+        if progress and progress_queue is None:
+            if ensemble_member is not None:
+                epoch_iter.set_description(f"Member {ensemble_member + 1}: Phase 2 SGLD")
+            else:
+                epoch_iter.set_description("Phase 2: SGLD Sampling")
+
+        # Phase 2A: Burn-in period (no noise, no sampling)
+        logger.info(f"Phase 2A: Burn-in period ({config.sgld_burnin_epochs} epochs, no noise)")
+        for sgld_epoch in range(config.sgld_burnin_epochs):
+            # Update jitter (continue from Phase 1's final epoch)
+            model.update_jitter(phase1_epochs_completed + sgld_epoch)
+
+            optimizer.zero_grad()
+
+            # Generate spectrum
+            spectrum = model()
+
+            # Data fidelity loss
+            if use_coo_spmv:
+                y_pred = _coo_spmv(H_row, H_col, H_val, spectrum, n_obs)
+            else:
+                y_pred = torch.mv(H_sparse, spectrum)
+
+            diff = (observations - y_pred) / flux_scale
+            loss_data = torch.sum(weights * (diff**2))
+
+            # Regularization loss
+            cwt_coeffs = cwt(spectrum / flux_scale_device)
+
+            if use_adaptive:
+                if sgld_epoch < config.learning_rate_warmup_epochs:
+                    current_floor = torch.tensor(config.reg_warmup_floor, device=device)
+                else:
+                    current_floor = torch.tensor(config.reg_normal_floor, device=device)
+
+            loss_reg = 0.0
+            if config.regularization_method == "absolute":
+                for coeff in cwt_coeffs:
+                    loss_reg += torch.sum(torch.abs(coeff))
+            elif config.regularization_method == "log":
+                for coeff in cwt_coeffs:
+                    with torch.no_grad():
+                        mad_sigma = 1.4826 * torch.median(torch.abs(coeff - torch.median(coeff)))
+                        adaptive_epsilon = config.reg_sensitivity_factor * mad_sigma
+                        effective_epsilon = torch.max(adaptive_epsilon, current_floor)
+                    loss_reg += effective_epsilon * log_loss(coeff, epsilon=effective_epsilon.item())
+            elif config.regularization_method == "cauchy":
+                for coeff in cwt_coeffs:
+                    with torch.no_grad():
+                        mad_sigma = 1.4826 * torch.median(torch.abs(coeff - torch.median(coeff)))
+                        adaptive_gamma = config.reg_sensitivity_factor * mad_sigma
+                        effective_gamma = torch.max(adaptive_gamma, current_floor)
+                    loss_reg += effective_gamma * cauchy_loss(coeff, gamma=effective_gamma.item())
+
+            loss_reg = loss_reg * config.regularization_weight
+            loss = loss_data + loss_reg
+
+            # Backward
+            loss.backward()
+
+            # NO gradient noise injection during burn-in
+
+            # Optimizer step (no scheduler in Phase 2)
+            optimizer.step()
+
+            # NO sample collection during burn-in
+
+            # Update progress bar (manually, since we're iterating over range)
+            if progress and progress_queue is None:
+                epoch_iter.update(1)
+
+            # Progress reporting
+            if progress_queue is not None and ensemble_member is not None:
+                if sgld_epoch % progress_interval == 0 or sgld_epoch == config.sgld_burnin_epochs - 1:
+                    try:
+                        postfix = {"Phase": "Burn-in", "Loss": f"{loss.item():.3e}", "LR": f"{config.sgld_lr:.2e}"}
+                        # Total progress = Phase 1 completed + Phase 2 current epoch
+                        total_progress = phase1_epochs_completed + sgld_epoch + 1
+                        progress_queue.put_nowait(("progress", ensemble_member, total_progress, postfix))
+                    except Exception:
+                        pass
+
+            # Log to wandb periodically
+            if wandb_enabled and sgld_epoch % config.wandb_log_frequency == 0:
+                metrics = {
+                    "sgld_epoch": sgld_epoch,
+                    "sgld_phase": "burnin",
+                    "sgld_loss": loss.item(),
+                    "sgld_data_loss": loss_data.item(),
+                    "sgld_reg_loss": loss_reg.item(),
+                    "sgld_lr": config.sgld_lr,
+                }
+                config.log_to_wandb(metrics, step=phase1_epochs_completed + sgld_epoch)
+
+        logger.info("Phase 2A complete: Burn-in finished, starting sampling phase")
+
+        # Phase 2B: Sampling period (with noise, collect samples)
+        sampling_epochs = config.sgld_epochs - config.sgld_burnin_epochs
+        logger.info(
+            f"Phase 2B: Sampling period ({sampling_epochs} epochs, collect every {config.sgld_collect_interval} epochs)"
+        )
+
+        for sgld_epoch in range(sampling_epochs):
+            actual_sgld_epoch = config.sgld_burnin_epochs + sgld_epoch
+
+            # Update jitter (continue from Phase 1's final epoch)
+            model.update_jitter(phase1_epochs_completed + actual_sgld_epoch)
+
+            optimizer.zero_grad()
+
+            # Generate spectrum
+            spectrum = model()
+
+            # Data fidelity loss
+            if use_coo_spmv:
+                y_pred = _coo_spmv(H_row, H_col, H_val, spectrum, n_obs)
+            else:
+                y_pred = torch.mv(H_sparse, spectrum)
+
+            diff = (observations - y_pred) / flux_scale
+            loss_data = torch.sum(weights * (diff**2))
+
+            # Regularization loss
+            cwt_coeffs = cwt(spectrum / flux_scale_device)
+
+            if use_adaptive:
+                if actual_sgld_epoch < config.learning_rate_warmup_epochs:
+                    current_floor = torch.tensor(config.reg_warmup_floor, device=device)
+                else:
+                    current_floor = torch.tensor(config.reg_normal_floor, device=device)
+
+            loss_reg = 0.0
+            if config.regularization_method == "absolute":
+                for coeff in cwt_coeffs:
+                    loss_reg += torch.sum(torch.abs(coeff))
+            elif config.regularization_method == "log":
+                for coeff in cwt_coeffs:
+                    with torch.no_grad():
+                        mad_sigma = 1.4826 * torch.median(torch.abs(coeff - torch.median(coeff)))
+                        adaptive_epsilon = config.reg_sensitivity_factor * mad_sigma
+                        effective_epsilon = torch.max(adaptive_epsilon, current_floor)
+                    loss_reg += effective_epsilon * log_loss(coeff, epsilon=effective_epsilon.item())
+            elif config.regularization_method == "cauchy":
+                for coeff in cwt_coeffs:
+                    with torch.no_grad():
+                        mad_sigma = 1.4826 * torch.median(torch.abs(coeff - torch.median(coeff)))
+                        adaptive_gamma = config.reg_sensitivity_factor * mad_sigma
+                        effective_gamma = torch.max(adaptive_gamma, current_floor)
+                    loss_reg += effective_gamma * cauchy_loss(coeff, gamma=effective_gamma.item())
+
+            loss_reg = loss_reg * config.regularization_weight
+            loss = loss_data + loss_reg
+
+            # Backward
+            loss.backward()
+
+            # SGLD: Inject adaptive gradient noise
+            with torch.no_grad():
+                grad_norm = torch.cat([p.grad.flatten() for p in model.parameters() if p.grad is not None]).norm()
+                noise_std = config.sgld_noise_factor * grad_norm
+
+                # Inject Gaussian noise into gradients
+                for param in model.parameters():
+                    if param.grad is not None:
+                        noise = torch.randn_like(param.grad) * noise_std
+                        param.grad.add_(noise)
+
+            # Optimizer step (no scheduler in Phase 2)
+            optimizer.step()
+
+            # Collect sample every N epochs during sampling phase
+            if sgld_epoch % config.sgld_collect_interval == 0:
+                with torch.no_grad():
+                    current_spectrum = model().detach().cpu()
+                    sgld_samples.append(current_spectrum)
+
+            # Progress reporting
+            if progress_queue is not None and ensemble_member is not None:
+                if sgld_epoch % progress_interval == 0 or sgld_epoch == sampling_epochs - 1:
+                    try:
+                        postfix = {
+                            "Phase": "Sampling",
+                            "Samples": f"{len(sgld_samples)}",
+                            "Loss": f"{loss.item():.3e}",
+                            "GradNorm": f"{grad_norm:.3e}",
+                        }
+                        # Total progress = Phase 1 completed + Phase 2 current epoch
+                        total_progress = phase1_epochs_completed + actual_sgld_epoch + 1
+                        progress_queue.put_nowait(("progress", ensemble_member, total_progress, postfix))
+                    except Exception:
+                        pass
+
+            # Log to wandb periodically
+            if wandb_enabled and sgld_epoch % config.wandb_log_frequency == 0:
+                metrics = {
+                    "sgld_epoch": actual_sgld_epoch,
+                    "sgld_phase": "sampling",
+                    "sgld_loss": loss.item(),
+                    "sgld_data_loss": loss_data.item(),
+                    "sgld_reg_loss": loss_reg.item(),
+                    "sgld_grad_norm": grad_norm.item(),
+                    "sgld_lr": config.sgld_lr,
+                    "sgld_samples_collected": len(sgld_samples),
+                }
+                config.log_to_wandb(metrics, step=phase1_epochs_completed + actual_sgld_epoch)
+
+            # Update progress bar (manually, since we're iterating over range)
+            if progress and progress_queue is None:
+                epoch_iter.update(1)
+
+        # Phase 2 complete: compute statistics
+        if sgld_samples:
+            logger.info(f"Phase 2 complete: collected {len(sgld_samples)} samples")
+
+            # Stack samples and compute statistics
+            sgld_samples_tensor = torch.stack(sgld_samples)  # Shape: (n_samples, n_wavelength)
+            sgld_mean = sgld_samples_tensor.mean(dim=0)  # Shape: (n_wavelength,)
+            sgld_std = sgld_samples_tensor.std(dim=0)  # Shape: (n_wavelength,)
+
+            logger.info(
+                f"SGLD statistics: "
+                f"mean flux range: [{sgld_mean.min():.3f}, {sgld_mean.max():.3f}] μJy, "
+                f"std uncertainty range: [{sgld_std.min():.3f}, {sgld_std.max():.3f}] μJy"
+            )
+
+            # Log SGLD results to wandb if enabled
+            if config.is_wandb_enabled():
+                try:
+                    import wandb
+
+                    wandb_summary = {
+                        "sgld/n_samples": len(sgld_samples),
+                        "sgld/mean_flux_min": float(sgld_mean.min()),
+                        "sgld/mean_flux_max": float(sgld_mean.max()),
+                        "sgld/std_min": float(sgld_std.min()),
+                        "sgld/std_max": float(sgld_std.max()),
+                    }
+                    config.log_to_wandb(wandb_summary, step=phase1_epochs_completed + config.sgld_epochs)
+
+                    # Log mean and std spectra if raw data saving is enabled
+                    if config.wandb_save_raw_data:
+                        wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
+                        sgld_mean_np = sgld_mean.cpu().numpy()
+                        sgld_std_np = sgld_std.cpu().numpy()
+
+                        config.log_spectrum_data_to_wandb(
+                            sgld_mean_np,
+                            wavelength_cpu,
+                            phase1_epochs_completed + config.sgld_epochs,
+                            data_type="sgld_mean",
+                        )
+                        config.log_spectrum_data_to_wandb(
+                            sgld_std_np,
+                            wavelength_cpu,
+                            phase1_epochs_completed + config.sgld_epochs,
+                            data_type="sgld_std",
+                        )
+
+                except Exception as e:
+                    import warnings
+
+                    warnings.warn(f"Failed to log SGLD results to wandb: {e}", RuntimeWarning)
+
+    # End timing
+    end_time = time.time()
+    solver_time = end_time - start_time
+
     # Create status message
     solver_status = "success"
 
     logger.info(
-        f"Optimization complete. Status: {solver_status}, Time: {solver_time:.2f}s, Final Loss: {current_loss:.4e}"
+        f"Optimization complete. Status: {solver_status}, Time: {solver_time:.2f}s, "
+        f"Phase 1: {phase1_epochs_completed} epochs"
     )
+
+    if config.enable_sgld:
+        logger.info(f"Phase 2: {len(sgld_samples)} SGLD samples collected")
 
     # Final wandb logging and convergence analysis
     if wandb_enabled:
@@ -1192,9 +1487,8 @@ def solve_global_reconstruction(
                 "training_completed": True,
                 "final_status": solver_status,
                 "total_time_seconds": solver_time,
-                "final_loss": current_loss,
-                "total_epochs_completed": config.epochs,
-                "epochs_per_second": config.epochs / solver_time,
+                "phase1_epochs_completed": phase1_epochs_completed,
+                "epochs_per_second": phase1_epochs_completed / solver_time,
             }
 
             # Add EMA final information
@@ -1211,9 +1505,21 @@ def solve_global_reconstruction(
 
                 if ema_tracker.is_initialized:
                     final_metrics["ema_activated_at_epoch"] = ema_start_epoch
-                    final_metrics["ema_tracking_epochs"] = config.epochs - ema_start_epoch
+                    final_metrics["ema_tracking_epochs"] = phase1_epochs_completed - ema_start_epoch
             else:
                 final_metrics["ema_enabled"] = False
+
+            # Add SGLD information if enabled
+            if config.enable_sgld:
+                final_metrics.update(
+                    {
+                        "sgld_enabled": True,
+                        "sgld_epochs": config.sgld_epochs,
+                        "sgld_samples_collected": len(sgld_samples),
+                    }
+                )
+            else:
+                final_metrics["sgld_enabled"] = False
 
             # Add convergence analysis if tracking was enabled
             if track_convergence and spectrum_changes:
@@ -1263,19 +1569,19 @@ def solve_global_reconstruction(
 
             # Log final spectrum data if enabled
             if config.wandb_save_raw_data:
-                final_spectrum_cpu = final_spectrum.cpu().numpy()
+                best_fit_spectrum_cpu = best_fit_spectrum.cpu().numpy()
                 wavelength_cpu = data.global_wavelength_grid.cpu().numpy()
                 config.log_spectrum_data_to_wandb(
-                    final_spectrum_cpu, wavelength_cpu, config.epochs, data_type="final_spectrum"
+                    best_fit_spectrum_cpu, wavelength_cpu, phase1_epochs_completed, data_type="final_spectrum"
                 )
 
-                # Log EMA spectrum if available and different from final spectrum
+                # Log EMA spectrum if available and different from best fit
                 if ema_tracker is not None and ema_tracker.is_initialized:
                     ema_final_spectrum = ema_tracker.get_ema_spectrum()
                     if ema_final_spectrum is not None:
                         ema_spectrum_cpu = ema_final_spectrum.detach().cpu().numpy()
                         config.log_spectrum_data_to_wandb(
-                            ema_spectrum_cpu, wavelength_cpu, config.epochs, data_type="final_ema_spectrum"
+                            ema_spectrum_cpu, wavelength_cpu, phase1_epochs_completed, data_type="final_ema_spectrum"
                         )
 
         except Exception as e:
@@ -1290,4 +1596,23 @@ def solve_global_reconstruction(
             f"chi2={early_stop_info['chi2']:.3f}, pvalue={early_stop_info['pvalue']:.3f}"
         )
 
-    return final_spectrum.cpu(), solver_status, solver_time, early_stop_info
+    # Return results based on whether SGLD was enabled
+    if config.enable_sgld and sgld_mean is not None and sgld_std is not None:
+        # Return with SGLD data
+        # best_fit_spectrum: Phase 1 MAP result (clean)
+        # sgld_samples_tensor: All samples from Phase 2
+        # sgld_mean: Mean of SGLD samples
+        # sgld_std: Standard deviation of SGLD samples (uncertainty)
+        sgld_samples_tensor = torch.stack(sgld_samples)
+        return (
+            best_fit_spectrum,  # Clean MAP result from Phase 1
+            sgld_samples_tensor.cpu().numpy(),  # All SGLD samples
+            sgld_mean.cpu().numpy(),  # SGLD mean
+            sgld_std.cpu().numpy(),  # SGLD std (uncertainty)
+            solver_status,
+            solver_time,
+            early_stop_info,
+        )
+    else:
+        # Standard return without SGLD
+        return best_fit_spectrum, solver_status, solver_time, early_stop_info

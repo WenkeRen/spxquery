@@ -5,11 +5,10 @@ This module provides configuration classes for spectral reconstruction
 from SPHEREx narrow-band photometry using PyTorch-based Deep Image Prior.
 """
 
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
-import warnings
 
 import yaml
 
@@ -136,6 +135,27 @@ class SEDConfig:
         Epoch to start EMA tracking. Default: None (uses learning_rate_warmup_epochs).
         If provided, EMA tracking begins after this many epochs.
         If None, automatically uses the same value as learning_rate_warmup_epochs.
+    enable_sgld : bool
+        Enable/disable SGLD sampling for uncertainty quantification. Default: False.
+        When enabled, reconstruction runs in two phases:
+        - Phase 1: Standard optimization (epochs iterations with early stopping + cooldown)
+        - Phase 2: SGLD sampling (sgld_epochs iterations with burn-in)
+    sgld_epochs : int
+        Total SGLD sampling epochs (burn-in + sampling). Default: 1000.
+        Phase 2 consists of sgld_burnin_epochs (no noise) + (sgld_epochs - sgld_burnin_epochs) (sampling).
+    sgld_burnin_epochs : int
+        Burn-in period before sampling starts. Default: 300.
+        During burn-in: use SGLD learning rate but NO gradient noise, NO sample collection.
+        After burn-in: start injecting noise and collecting samples.
+    sgld_lr : float
+        Fixed learning rate for SGLD sampling (Phase 2). Default: 1e-5.
+        Should typically be much lower than Phase 1 learning rate.
+    sgld_noise_factor : float
+        Adaptive noise scaling factor for gradient noise injection. Default: 0.1.
+        Gradient noise standard deviation: σ = k × ||∇θ|| where k is this factor.
+    sgld_collect_interval : int
+        Collect sample every N epochs during sampling phase. Default: 10.
+        Sampling phase starts after burn-in. Total samples = (sgld_epochs - sgld_burnin_epochs) / sgld_collect_interval.
 
     Attributes
     ----------
@@ -227,9 +247,9 @@ class SEDConfig:
     ensemble_n_workers: Optional[int] = (
         None  # Number of parallel workers for ensemble processing (None = sequential, 1 = sequential, >1 = parallel)
     )
-    ensemble_perturb_observations: bool = (
-        False  # DEPRECATED: Perturb observations with Gaussian noise during ensemble processing. This feature is ineffective and will be removed in a future version.
-    )
+    # DEPRECATED: Perturb observations with Gaussian noise during ensemble processing.
+    # This feature is ineffective and will be removed in a future version.
+    ensemble_perturb_observations: bool = False
 
     # Ensemble robustness controls (optional)
     # These are designed to mitigate rare "hang" cases in parallel workers.
@@ -244,6 +264,14 @@ class SEDConfig:
     early_stop_cooldown_epoch: int = 300  # Number of cooldown epochs to run at the end (jump to last N epochs)
     early_stop_target_chi2: float = 1.05  # Target chi2 threshold for perfect early stop
     early_stop_lowest_chi2: float = 0.85  # Lowest chi2 threshold for force early stop (regardless of p-value)
+
+    # SGLD sampling parameters for uncertainty quantification
+    enable_sgld: bool = False  # Enable/disable SGLD sampling (two-phase reconstruction)
+    sgld_epochs: int = 1000  # Total SGLD epochs (burn-in + sampling)
+    sgld_burnin_epochs: int = 300  # Burn-in period before sampling (no noise, no samples)
+    sgld_lr: float = 1e-5  # Fixed learning rate for SGLD sampling (Phase 2)
+    sgld_noise_factor: float = 0.1  # Adaptive noise scaling factor (k) for gradient noise: σ = k × ||∇θ||
+    sgld_collect_interval: int = 10  # Collect sample every N epochs during sampling phase
 
     def __post_init__(self):
         """Validate configuration parameters after initialization."""
@@ -276,7 +304,8 @@ class SEDConfig:
         valid_schedulers = ["none", "cosine", "cosine_warmup", "warmup"]
         if self.learning_rate_scheduler_type not in valid_schedulers:
             raise ValueError(
-                f"learning_rate_scheduler_type must be one of {valid_schedulers}, got '{self.learning_rate_scheduler_type}'"
+                f"learning_rate_scheduler_type must be one of {valid_schedulers}, "
+                f"got '{self.learning_rate_scheduler_type}'"
             )
         if self.learning_rate_warmup_epochs < 0:
             raise ValueError(
@@ -284,7 +313,8 @@ class SEDConfig:
             )
         if self.learning_rate_warmup_epochs >= self.epochs:
             raise ValueError(
-                f"learning_rate_warmup_epochs ({self.learning_rate_warmup_epochs}) must be less than epochs ({self.epochs})"
+                f"learning_rate_warmup_epochs ({self.learning_rate_warmup_epochs}) "
+                f"must be less than epochs ({self.epochs})"
             )
         if self.learning_rate_min_factor <= 0 or self.learning_rate_min_factor >= 1:
             raise ValueError(
@@ -421,15 +451,12 @@ class SEDConfig:
         # Validate ensemble robustness controls
         if self.ensemble_member_timeout_seconds is not None and self.ensemble_member_timeout_seconds <= 0:
             raise ValueError(
-                "ensemble_member_timeout_seconds must be > 0 or None, "
-                f"got {self.ensemble_member_timeout_seconds}"
+                f"ensemble_member_timeout_seconds must be > 0 or None, got {self.ensemble_member_timeout_seconds}"
             )
         if self.ensemble_max_retries < 0:
             raise ValueError(f"ensemble_max_retries must be >= 0, got {self.ensemble_max_retries}")
         if self.ensemble_retry_backoff_seconds < 0:
-            raise ValueError(
-                f"ensemble_retry_backoff_seconds must be >= 0, got {self.ensemble_retry_backoff_seconds}"
-            )
+            raise ValueError(f"ensemble_retry_backoff_seconds must be >= 0, got {self.ensemble_retry_backoff_seconds}")
 
         # Deprecation warning for perturb method
         if self.ensemble_perturb_observations:
@@ -448,7 +475,8 @@ class SEDConfig:
             import warnings
 
             warnings.warn(
-                "Ensembling with wandb logging: Only the first ensemble member will be logged to wandb to prevent conflicts.",
+                "Ensembling with wandb logging: Only the first ensemble member "
+                "will be logged to wandb to prevent conflicts.",
                 UserWarning,
                 stacklevel=2,
             )
@@ -459,7 +487,8 @@ class SEDConfig:
                 raise ValueError(f"early_stop_check_steps must be positive, got {self.early_stop_check_steps}")
             if self.early_stop_cooldown_epoch >= self.epochs:
                 raise ValueError(
-                    f"early_stop_cooldown_epoch ({self.early_stop_cooldown_epoch}) must be less than epochs ({self.epochs})"
+                    f"early_stop_cooldown_epoch ({self.early_stop_cooldown_epoch}) "
+                    f"must be less than epochs ({self.epochs})"
                 )
             # Ensure there's enough room for early stopping to actually trigger
             # Earliest possible trigger = warmup_end + check_steps
@@ -478,6 +507,30 @@ class SEDConfig:
                     f"early_stop_lowest_chi2 ({self.early_stop_lowest_chi2}) must be less than "
                     f"early_stop_target_chi2 ({self.early_stop_target_chi2})"
                 )
+
+        # Validate SGLD sampling parameters
+        if self.enable_sgld:
+            if self.sgld_epochs <= 0:
+                raise ValueError(f"sgld_epochs must be positive, got {self.sgld_epochs}")
+            if self.sgld_burnin_epochs < 0:
+                raise ValueError(f"sgld_burnin_epochs must be non-negative, got {self.sgld_burnin_epochs}")
+            if self.sgld_burnin_epochs >= self.sgld_epochs:
+                raise ValueError(
+                    f"sgld_burnin_epochs ({self.sgld_burnin_epochs}) must be less than sgld_epochs ({self.sgld_epochs})"
+                )
+            if self.sgld_lr <= 0:
+                raise ValueError(f"sgld_lr must be positive, got {self.sgld_lr}")
+            if self.sgld_lr >= self.learning_rate:
+                warnings.warn(
+                    f"sgld_lr ({self.sgld_lr}) is >= initial learning_rate ({self.learning_rate}). "
+                    f"SGLD learning rate should typically be much lower than Phase 1 learning rate.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            if self.sgld_noise_factor <= 0:
+                raise ValueError(f"sgld_noise_factor must be positive, got {self.sgld_noise_factor}")
+            if self.sgld_collect_interval <= 0:
+                raise ValueError(f"sgld_collect_interval must be positive, got {self.sgld_collect_interval}")
 
     def is_wandb_enabled(self) -> bool:
         """
@@ -627,6 +680,12 @@ class SEDConfig:
             "early_stop_cooldown_epoch": self.early_stop_cooldown_epoch,
             "early_stop_target_chi2": self.early_stop_target_chi2,
             "early_stop_lowest_chi2": self.early_stop_lowest_chi2,
+            "enable_sgld": self.enable_sgld,
+            "sgld_epochs": self.sgld_epochs,
+            "sgld_burnin_epochs": self.sgld_burnin_epochs,
+            "sgld_lr": self.sgld_lr,
+            "sgld_noise_factor": self.sgld_noise_factor,
+            "sgld_collect_interval": self.sgld_collect_interval,
         }
 
         # Handle wandb_run separately
@@ -650,12 +709,12 @@ class SEDConfig:
 
         # Convert tuples to lists for YAML serialization
         # (yaml.safe_load can't handle !!python/tuple tags)
-        for field in fields(self.__class__):
-            if field.name in data:
-                origin = typing.get_origin(field.type)
+        for field_info in fields(self.__class__):
+            if field_info.name in data:
+                origin = typing.get_origin(field_info.type)
                 if origin is tuple:
-                    if isinstance(data[field.name], tuple):
-                        data[field.name] = list(data[field.name])
+                    if isinstance(data[field_info.name], tuple):
+                        data[field_info.name] = list(data[field_info.name])
 
         return data
 
@@ -682,15 +741,15 @@ class SEDConfig:
         filtered_data = {k: v for k, v in data.items() if k in valid_fields}
 
         # Convert lists back to tuples for tuple-type fields (YAML limitation)
-        for field in fields(cls):
-            if field.name in filtered_data:
+        for field_info in fields(cls):
+            if field_info.name in filtered_data:
                 # Check if the field type is a Tuple
-                origin = typing.get_origin(field.type)
+                origin = typing.get_origin(field_info.type)
                 if origin is tuple:
                     # Convert list to tuple if needed
-                    value = filtered_data[field.name]
+                    value = filtered_data[field_info.name]
                     if isinstance(value, list):
-                        filtered_data[field.name] = tuple(value)
+                        filtered_data[field_info.name] = tuple(value)
 
         return cls(**filtered_data)
 

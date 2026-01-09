@@ -5,7 +5,7 @@ Data structures for SED reconstruction.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -89,6 +89,12 @@ class SEDReconstructionResult:
     early_stop_chi2: Optional[float] = None  # Chi-squared value at early stop trigger
     early_stop_pvalue: Optional[float] = None  # Normality test p-value at early stop trigger
 
+    # SGLD sampling results (if enabled)
+    sgld_samples: Optional[np.ndarray] = None  # SGLD samples: shape (n_samples, n_wavelength)
+    sgld_mean: Optional[np.ndarray] = None  # Mean spectrum from SGLD samples: shape (n_wavelength,)
+    sgld_std: Optional[np.ndarray] = None  # Std over SGLD samples (uncertainty): shape (n_wavelength,)
+    sgld_n_samples: Optional[int] = None  # Number of SGLD samples collected
+
     def save_all(self, output_dir: Union[str, Path]) -> None:
         """
         Save complete reconstruction results with proper folder structure.
@@ -126,21 +132,30 @@ class SEDReconstructionResult:
         for band_name, band_data in self.band_data.items():
             band_data.save_to_csv(banddata_dir)
 
-        # 3. Save SED result
-        sed_df = pd.DataFrame(
-            {
-                "wavelength": self.wavelength,
-                "flux": self.flux,
-            }
-        )
+        # 3. Save SED result (with SGLD uncertainty and mean if available)
+        sed_data = {
+            "wavelength": self.wavelength,
+            "flux": self.flux,
+        }
+
+        # Add SGLD columns if available
+        if self.sgld_std is not None:
+            sed_data["flux_err"] = self.sgld_std  # Intrinsic uncertainty from SGLD
+            sed_data["sgld_mean"] = self.sgld_mean  # Posterior mean from SGLD samples
+
+        sed_df = pd.DataFrame(sed_data)
         sed_path = results_dir / "sed.csv"
         sed_df.to_csv(sed_path, index=False)
         logger.info(f"Saved SED result to {sed_path}")
 
-        # 4. Save validation metrics
+        # 4. Save SGLD samples to metadata (not as separate .npy file)
+        if self.sgld_samples is not None:
+            logger.debug(f"Encoding {self.sgld_n_samples} SGLD samples to YAML (this may take a moment)")
+
+        # 5. Save validation metrics
         self.validation_metrics.save_to_files(results_dir)
 
-        # 5. Generate QA plot
+        # 6. Generate QA plot
         try:
             from .plots import plot_sed_reconstruction_dashboard
 
@@ -150,7 +165,7 @@ class SEDReconstructionResult:
         except ImportError as e:
             logger.warning(f"Could not generate QA plot: {e}")
 
-        # 6. Save metadata to reconstruction.yaml
+        # 7. Save metadata to reconstruction.yaml
         log_data = {
             "solver_status": self.solver_status,
             "solver_time": self.solver_time,
@@ -164,6 +179,18 @@ class SEDReconstructionResult:
                 "trigger_epoch": self.early_stop_epoch,
                 "chi_squared": self.early_stop_chi2,
                 "normality_pvalue": self.early_stop_pvalue,
+            }
+
+        # Add SGLD sampling information if available
+        if self.sgld_samples is not None:
+            log_data["sgld_sampling"] = {
+                "n_samples": self.sgld_n_samples,
+                "mean_flux_min": float(np.min(self.sgld_mean)),
+                "mean_flux_max": float(np.max(self.sgld_mean)),
+                "std_min": float(np.min(self.sgld_std)),
+                "std_max": float(np.max(self.sgld_std)),
+                # Store samples as list of lists for YAML serialization
+                "samples": self.sgld_samples.tolist(),
             }
 
         log_path = logs_dir / "reconstruction.yaml"
@@ -227,6 +254,11 @@ class SEDReconstructionResult:
         sed_df = pd.read_csv(sed_path)
         wavelength = sed_df["wavelength"].values
         flux = sed_df["flux"].values
+
+        # Load SGLD data if available (stored as flux_err and sgld_mean columns)
+        sgld_std = sed_df["flux_err"].values if "flux_err" in sed_df.columns else None
+        sgld_mean = sed_df["sgld_mean"].values if "sgld_mean" in sed_df.columns else None
+
         logger.info(f"Loaded SED result from {sed_path}")
 
         # 4. Load validation metrics
@@ -241,6 +273,12 @@ class SEDReconstructionResult:
         solver_status = "unknown"
         solver_time = 0.0
         metadata = {}
+        early_stop_status = None
+        early_stop_epoch = None
+        early_stop_chi2 = None
+        early_stop_pvalue = None
+        sgld_samples = None
+        sgld_n_samples = None
 
         log_path = logs_dir / "reconstruction.yaml"
         if log_path.exists():
@@ -249,6 +287,24 @@ class SEDReconstructionResult:
                 solver_status = log_data.get("solver_status", "unknown")
                 solver_time = log_data.get("solver_time", 0.0)
                 metadata = log_data.get("metadata", {})
+
+                # Load early stopping information if available
+                early_stopping = log_data.get("early_stopping")
+                if early_stopping is not None:
+                    early_stop_status = early_stopping.get("status")
+                    early_stop_epoch = early_stopping.get("trigger_epoch")
+                    early_stop_chi2 = early_stopping.get("chi_squared")
+                    early_stop_pvalue = early_stopping.get("normality_pvalue")
+
+                # Load SGLD samples if available
+                # Note: sgld_std and sgld_mean were already loaded from sed.csv above
+                sgld_sampling_info = log_data.get("sgld_sampling")
+                if sgld_sampling_info is not None and "samples" in sgld_sampling_info:
+                    samples_list = sgld_sampling_info["samples"]
+                    sgld_samples = np.array(samples_list)
+                    sgld_n_samples = sgld_samples.shape[0]
+                    logger.info(f"Loaded SGLD samples from {log_path} ({sgld_n_samples} samples)")
+
             logger.info(f"Loaded reconstruction log from {log_path}")
         else:
             logger.warning(f"Reconstruction log not found: {log_path}")
@@ -263,6 +319,14 @@ class SEDReconstructionResult:
             validation_metrics=validation_metrics,
             metadata=metadata,
             band_data=band_data,
+            early_stop_status=early_stop_status,
+            early_stop_epoch=early_stop_epoch,
+            early_stop_chi2=early_stop_chi2,
+            early_stop_pvalue=early_stop_pvalue,
+            sgld_samples=sgld_samples,
+            sgld_mean=sgld_mean,
+            sgld_std=sgld_std,
+            sgld_n_samples=sgld_n_samples,
         )
 
         logger.info(f"Loaded complete SED reconstruction from {output_dir}")
@@ -409,13 +473,18 @@ class EnsembleResult:
                 member_dir = members_dir / f"member_{i}"
                 member_dir.mkdir(exist_ok=True)
 
-                # Save member SED
-                member_sed_df = pd.DataFrame(
-                    {
-                        "wavelength": member_result.wavelength,
-                        "flux": member_result.flux,
-                    }
-                )
+                # Save member SED (with SGLD uncertainty and mean if available)
+                member_sed_data = {
+                    "wavelength": member_result.wavelength,
+                    "flux": member_result.flux,
+                }
+
+                # Add SGLD columns if available
+                if member_result.sgld_std is not None:
+                    member_sed_data["flux_err"] = member_result.sgld_std  # Intrinsic uncertainty from SGLD
+                    member_sed_data["sgld_mean"] = member_result.sgld_mean  # Posterior mean from SGLD samples
+
+                member_sed_df = pd.DataFrame(member_sed_data)
                 member_sed_path = member_dir / "sed.csv"
                 member_sed_df.to_csv(member_sed_path, index=False)
 

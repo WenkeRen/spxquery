@@ -212,7 +212,7 @@ class SEDReconstructor:
 
         # Solve using PyTorch Deep Image Prior
         logger.info("Starting PyTorch Deep Image Prior optimization...")
-        result_spectrum, solver_status, solver_time, early_stop_info = solve_global_reconstruction(
+        solver_result = solve_global_reconstruction(
             global_dataset,
             self.config,
             ensemble_member=ensemble_member,
@@ -221,6 +221,26 @@ class SEDReconstructor:
             progress_queue=progress_queue,
             progress_interval=progress_interval,
         )
+
+        # Unpack solver result (handles both SGLD and non-SGLD cases)
+        if self.config.enable_sgld and len(solver_result) == 7:
+            # SGLD enabled: 7 return values
+            (
+                result_spectrum,
+                sgld_samples,
+                sgld_mean,
+                sgld_std,
+                solver_status,
+                solver_time,
+                early_stop_info,
+            ) = solver_result
+            logger.info(f"SGLD sampling completed: collected {sgld_samples.shape[0]} samples")
+        else:
+            # Standard case: 4 return values
+            result_spectrum, solver_status, solver_time, early_stop_info = solver_result
+            sgld_samples = None
+            sgld_mean = None
+            sgld_std = None
 
         # Assess reconstruction quality
         # Convert sparse matrix to scipy csr format for validation
@@ -275,6 +295,10 @@ class SEDReconstructor:
             early_stop_epoch=early_stop_info["trigger_epoch"],
             early_stop_chi2=early_stop_info["chi2"],
             early_stop_pvalue=early_stop_info["pvalue"],
+            sgld_samples=sgld_samples,
+            sgld_mean=sgld_mean,
+            sgld_std=sgld_std,
+            sgld_n_samples=sgld_samples.shape[0] if sgld_samples is not None else None,
         )
 
         logger.info(
@@ -323,7 +347,7 @@ class SEDReconstructor:
             progress_interval = 10
             member_bars = [
                 tqdm(
-                    total=cfg.epochs,
+                    total=cfg.epochs + (cfg.sgld_epochs if cfg.enable_sgld else 0),
                     desc=f"Member {i + 1}",
                     position=i,
                     leave=True,
@@ -366,7 +390,8 @@ class SEDReconstructor:
                                     continue
                                 kind = msg[0]
                                 if kind == "progress":
-                                    # Backward compatible: ("progress", idx, epoch_done) or ("progress", idx, epoch_done, postfix)
+                                    # Backward compatible: ("progress", idx, epoch_done)
+                                    # or ("progress", idx, epoch_done, postfix)
                                     member_index = msg[1]
                                     epoch_done = msg[2]
                                     postfix = msg[3] if len(msg) > 3 else None
@@ -497,7 +522,8 @@ class SEDReconstructor:
                     if msg is not None:
                         kind = msg[0]
                         if kind == "progress":
-                            # Backward compatible: ("progress", idx, epoch_done) or ("progress", idx, epoch_done, postfix)
+                            # Backward compatible: ("progress", idx, epoch_done)
+                            # or ("progress", idx, epoch_done, postfix)
                             member_index = msg[1]
                             epoch_done = msg[2]
                             postfix = msg[3] if len(msg) > 3 else None
@@ -596,8 +622,36 @@ class SEDReconstructor:
 
         # Compute ensemble statistics
         mean_flux = np.mean(ensemble_fluxes, axis=0)
-        std_flux = np.std(ensemble_fluxes, axis=0, ddof=1)
+        statistical_uncertainty = np.std(ensemble_fluxes, axis=0, ddof=1)  # Cross-member variability
         median_flux = np.median(ensemble_fluxes, axis=0)
+
+        # Check if SGLD uncertainty is available from any member
+        has_sgld = member_results[0].sgld_std is not None
+
+        if has_sgld:
+            # Collect SGLD intrinsic uncertainties from all members
+            sgld_stds = [member.sgld_std for member in member_results if member.sgld_std is not None]
+
+            if sgld_stds:
+                # Quadrature sum of intrinsic uncertainties: σ_inst = (1/n) * sqrt(Σ(E_i²))
+                intrinsic_uncertainty = np.sqrt(np.sum(np.array(sgld_stds) ** 2, axis=0)) / len(sgld_stds)
+
+                # Combine uncertainties: total = sqrt(statistical^2 + intrinsic^2)
+                std_flux = np.sqrt(statistical_uncertainty**2 + intrinsic_uncertainty**2)
+
+                logger.info(
+                    f"Combined uncertainties: statistical (cross-member) + intrinsic (SGLD)"
+                    f"Mean statistical: {np.mean(statistical_uncertainty):.3f} μJy, "
+                    f"Mean intrinsic: {np.mean(intrinsic_uncertainty):.3f} μJy, "
+                    f"Mean combined: {np.mean(std_flux):.3f} μJy"
+                )
+            else:
+                # Fallback to statistical uncertainty only
+                std_flux = statistical_uncertainty
+                logger.warning("Some members have SGLD data but not all. Using statistical uncertainty only.")
+        else:
+            # No SGLD data: use statistical uncertainty only
+            std_flux = statistical_uncertainty
 
         # Build global dataset once for validation (minimize computation time)
         logger.info("Building global dataset for ensemble validation")
