@@ -1038,7 +1038,7 @@ def solve_global_reconstruction(
                         "Reg": f"{loss_reg.item():.3e}",
                         "LR": f"{current_lr:.2e}",
                         "Chi2": f"{chi2_per_obs_cached:.3f}",
-                        "Pval": f"{pvalue_normality_cached:.2f}",
+                        "Pval": f"{pvalue_normality_cached:.2e}",
                     }
                     if early_stop_info["status"] is not None:
                         postfix["ES"] = early_stop_info["status"]
@@ -1153,7 +1153,7 @@ def solve_global_reconstruction(
                 "Reg": f"{loss_reg.item():.3e}",
                 "LR": f"{current_lr:.2e}",
                 "Chi2": f"{chi2_per_obs_cached:.3f}",
-                "Pval": f"{pvalue_normality_cached:.2f}",
+                "Pval": f"{pvalue_normality_cached:.2e}",
             }
             # Add early stopping status to progress bar if triggered
             if early_stop_info["status"] is not None:
