@@ -156,6 +156,14 @@ class SEDConfig:
     sgld_collect_interval : int
         Collect sample every N epochs during sampling phase. Default: 10.
         Sampling phase starts after burn-in. Total samples = (sgld_epochs - sgld_burnin_epochs) / sgld_collect_interval.
+    use_drizzle_input : bool
+        Use drizzled spectrum as Deep Image Prior input instead of random noise. Default: False.
+        When enabled, dip_noise_std is ignored and jitter uses per-wavelength drizzle errors.
+        Reduces ringing artifacts and optimization difficulty by providing informed initial spectrum.
+        The drizzled spectrum is generated on the global_resolution grid.
+    drizzle_pixfrac : float
+        Drizzle pixfrac parameter (kernel shrinkage factor). Default: 0.2.
+        Values < 1.0 sharpen reconstruction but may cause aliasing. Only used if use_drizzle_input=True.
 
     Attributes
     ----------
@@ -272,6 +280,10 @@ class SEDConfig:
     sgld_lr: float = 1e-5  # Fixed learning rate for SGLD sampling (Phase 2)
     sgld_noise_factor: float = 0.1  # Adaptive noise scaling factor (k) for gradient noise: σ = k × ||∇θ||
     sgld_collect_interval: int = 10  # Collect sample every N epochs during sampling phase
+
+    # Drizzle input parameters for Deep Image Prior
+    use_drizzle_input: bool = False  # Use drizzled spectrum as DIP input instead of random noise
+    drizzle_pixfrac: float = 0.2  # Drizzle pixfrac parameter (shrinks bandwidth to reduce convolution effects)
 
     def __post_init__(self):
         """Validate configuration parameters after initialization."""
@@ -532,6 +544,11 @@ class SEDConfig:
             if self.sgld_collect_interval <= 0:
                 raise ValueError(f"sgld_collect_interval must be positive, got {self.sgld_collect_interval}")
 
+        # Validate drizzle input parameters
+        if self.use_drizzle_input:
+            if not (0.0 < self.drizzle_pixfrac <= 1.0):
+                raise ValueError(f"drizzle_pixfrac must be between 0 and 1 (exclusive of 0), got {self.drizzle_pixfrac}")
+
     def is_wandb_enabled(self) -> bool:
         """
         Check if wandb logging is enabled.
@@ -686,6 +703,8 @@ class SEDConfig:
             "sgld_lr": self.sgld_lr,
             "sgld_noise_factor": self.sgld_noise_factor,
             "sgld_collect_interval": self.sgld_collect_interval,
+            "use_drizzle_input": self.use_drizzle_input,
+            "drizzle_pixfrac": self.drizzle_pixfrac,
         }
 
         # Handle wandb_run separately

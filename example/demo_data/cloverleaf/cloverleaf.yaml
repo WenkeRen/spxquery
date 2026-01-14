@@ -73,7 +73,7 @@ config:
     timeout: 300
     max_retries: 3
     retry_delay: 5
-    user_agent: SPXQuery/0.2.0
+    user_agent: SPXQuery/0.2.2
   pipeline_stages:
   - query
   - download
@@ -114,19 +114,19 @@ query_results:
     t_min: 60842.270620127
     t_max: 60842.271952506
   - obs_id: 2025W25_1B_0062_3
-    band: D3
-    mjd: 60842.272778573504
-    wavelength_min: 1.6301
-    wavelength_max: 2.4346
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/3/level2_2025W25_1B_0062_3D3_spx_l2b-v20-2025-253.fits
-    t_min: 60842.272112384
-    t_max: 60842.273444763
-  - obs_id: 2025W25_1B_0062_3
     band: D6
     mjd: 60842.272778573504
     wavelength_min: 4.4115
     wavelength_max: 5.0096
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/6/level2_2025W25_1B_0062_3D6_spx_l2b-v20-2025-253.fits
+    t_min: 60842.272112384
+    t_max: 60842.273444763
+  - obs_id: 2025W25_1B_0062_3
+    band: D3
+    mjd: 60842.272778573504
+    wavelength_min: 1.6301
+    wavelength_max: 2.4346
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/3/level2_2025W25_1B_0062_3D3_spx_l2b-v20-2025-253.fits
     t_min: 60842.272112384
     t_max: 60842.273444763
   - obs_id: 2025W25_1B_0062_4
@@ -218,14 +218,6 @@ query_results:
     t_min: 60843.017368623
     t_max: 60843.018701001
   - obs_id: 2025W25_1B_0329_3
-    band: D3
-    mjd: 60843.698395784
-    wavelength_min: 1.6301
-    wavelength_max: 2.4346
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/3/level2_2025W25_1B_0329_3D3_spx_l2b-v20-2025-253.fits
-    t_min: 60843.697729595
-    t_max: 60843.699061973
-  - obs_id: 2025W25_1B_0329_3
     band: D6
     mjd: 60843.698395784
     wavelength_min: 4.4115
@@ -233,14 +225,14 @@ query_results:
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/6/level2_2025W25_1B_0329_3D6_spx_l2b-v20-2025-253.fits
     t_min: 60843.697729595
     t_max: 60843.699061973
-  - obs_id: 2025W25_1B_0329_4
+  - obs_id: 2025W25_1B_0329_3
     band: D3
-    mjd: 60843.699888041
+    mjd: 60843.698395784
     wavelength_min: 1.6301
     wavelength_max: 2.4346
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/3/level2_2025W25_1B_0329_4D3_spx_l2b-v20-2025-253.fits
-    t_min: 60843.699221852
-    t_max: 60843.70055423
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/3/level2_2025W25_1B_0329_3D3_spx_l2b-v20-2025-253.fits
+    t_min: 60843.697729595
+    t_max: 60843.699061973
   - obs_id: 2025W25_1B_0329_4
     band: D6
     mjd: 60843.699888041
@@ -249,20 +241,28 @@ query_results:
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/6/level2_2025W25_1B_0329_4D6_spx_l2b-v20-2025-253.fits
     t_min: 60843.699221852
     t_max: 60843.70055423
-  - obs_id: 2025W25_1B_0468_1
+  - obs_id: 2025W25_1B_0329_4
     band: D3
-    mjd: 60844.239586363
+    mjd: 60843.699888041
     wavelength_min: 1.6301
     wavelength_max: 2.4346
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/3/level2_2025W25_1B_0468_1D3_spx_l2b-v20-2025-253.fits
-    t_min: 60844.238920174
-    t_max: 60844.240252552
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/3/level2_2025W25_1B_0329_4D3_spx_l2b-v20-2025-253.fits
+    t_min: 60843.699221852
+    t_max: 60843.70055423
   - obs_id: 2025W25_1B_0468_1
     band: D6
     mjd: 60844.239586363
     wavelength_min: 4.4115
     wavelength_max: 5.0096
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/6/level2_2025W25_1B_0468_1D6_spx_l2b-v20-2025-253.fits
+    t_min: 60844.238920174
+    t_max: 60844.240252552
+  - obs_id: 2025W25_1B_0468_1
+    band: D3
+    mjd: 60844.239586363
+    wavelength_min: 1.6301
+    wavelength_max: 2.4346
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/3/level2_2025W25_1B_0468_1D3_spx_l2b-v20-2025-253.fits
     t_min: 60844.238920174
     t_max: 60844.240252552
   - obs_id: 2025W25_1B_0468_2
@@ -298,19 +298,19 @@ query_results:
     t_min: 60844.241904688
     t_max: 60844.243237066
   - obs_id: 2025W25_1B_0468_4
-    band: D6
-    mjd: 60844.244063122
-    wavelength_min: 4.4115
-    wavelength_max: 5.0096
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/6/level2_2025W25_1B_0468_4D6_spx_l2b-v20-2025-253.fits
-    t_min: 60844.243396933
-    t_max: 60844.244729311
-  - obs_id: 2025W25_1B_0468_4
     band: D3
     mjd: 60844.244063122
     wavelength_min: 1.6301
     wavelength_max: 2.4346
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/3/level2_2025W25_1B_0468_4D3_spx_l2b-v20-2025-253.fits
+    t_min: 60844.243396933
+    t_max: 60844.244729311
+  - obs_id: 2025W25_1B_0468_4
+    band: D6
+    mjd: 60844.244063122
+    wavelength_min: 4.4115
+    wavelength_max: 5.0096
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/6/level2_2025W25_1B_0468_4D6_spx_l2b-v20-2025-253.fits
     t_min: 60844.243396933
     t_max: 60844.244729311
   - obs_id: 2025W25_1B_0503_1
@@ -346,19 +346,19 @@ query_results:
     t_min: 60844.376740428
     t_max: 60844.378072807
   - obs_id: 2025W25_1B_0616_1
-    band: D5
-    mjd: 60844.851623446
-    wavelength_min: 3.8112999999999997
-    wavelength_max: 4.43
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/5/level2_2025W25_1B_0616_1D5_spx_l2b-v20-2025-253.fits
-    t_min: 60844.850957257
-    t_max: 60844.852289635
-  - obs_id: 2025W25_1B_0616_1
     band: D2
     mjd: 60844.851623446
     wavelength_min: 1.1033
     wavelength_max: 1.6499
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-252/2/level2_2025W25_1B_0616_1D2_spx_l2b-v20-2025-252.fits
+    t_min: 60844.850957257
+    t_max: 60844.852289635
+  - obs_id: 2025W25_1B_0616_1
+    band: D5
+    mjd: 60844.851623446
+    wavelength_min: 3.8112999999999997
+    wavelength_max: 4.43
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/5/level2_2025W25_1B_0616_1D5_spx_l2b-v20-2025-253.fits
     t_min: 60844.850957257
     t_max: 60844.852289635
   - obs_id: 2025W25_1B_0616_2
@@ -394,19 +394,19 @@ query_results:
     t_min: 60844.853941771
     t_max: 60844.855274149
   - obs_id: 2025W25_1B_0616_4
-    band: D5
-    mjd: 60844.8561002055
-    wavelength_min: 3.8112999999999997
-    wavelength_max: 4.43
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/5/level2_2025W25_1B_0616_4D5_spx_l2b-v20-2025-253.fits
-    t_min: 60844.855434016
-    t_max: 60844.856766395
-  - obs_id: 2025W25_1B_0616_4
     band: D2
     mjd: 60844.8561002055
     wavelength_min: 1.1033
     wavelength_max: 1.6499
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-252/2/level2_2025W25_1B_0616_4D2_spx_l2b-v20-2025-252.fits
+    t_min: 60844.855434016
+    t_max: 60844.856766395
+  - obs_id: 2025W25_1B_0616_4
+    band: D5
+    mjd: 60844.8561002055
+    wavelength_min: 3.8112999999999997
+    wavelength_max: 4.43
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_1B/l2b-v20-2025-253/5/level2_2025W25_1B_0616_4D5_spx_l2b-v20-2025-253.fits
     t_min: 60844.855434016
     t_max: 60844.856766395
   - obs_id: 2025W25_1B_0679_1
@@ -442,14 +442,6 @@ query_results:
     t_min: 60845.395558715
     t_max: 60845.396891094
   - obs_id: 2025W25_2A_0075_1
-    band: D5
-    mjd: 60845.8027040015
-    wavelength_min: 3.8112999999999997
-    wavelength_max: 4.43
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/5/level2_2025W25_2A_0075_1D5_spx_l2b-v20-2025-254.fits
-    t_min: 60845.802037812
-    t_max: 60845.803370191
-  - obs_id: 2025W25_2A_0075_1
     band: D2
     mjd: 60845.8027040015
     wavelength_min: 1.1033
@@ -457,20 +449,28 @@ query_results:
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/2/level2_2025W25_2A_0075_1D2_spx_l2b-v20-2025-254.fits
     t_min: 60845.802037812
     t_max: 60845.803370191
-  - obs_id: 2025W25_2A_0075_2
-    band: D2
-    mjd: 60845.804196247
-    wavelength_min: 1.1033
-    wavelength_max: 1.6499
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/2/level2_2025W25_2A_0075_2D2_spx_l2b-v20-2025-254.fits
-    t_min: 60845.803530058
-    t_max: 60845.804862436
+  - obs_id: 2025W25_2A_0075_1
+    band: D5
+    mjd: 60845.8027040015
+    wavelength_min: 3.8112999999999997
+    wavelength_max: 4.43
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/5/level2_2025W25_2A_0075_1D5_spx_l2b-v20-2025-254.fits
+    t_min: 60845.802037812
+    t_max: 60845.803370191
   - obs_id: 2025W25_2A_0075_2
     band: D5
     mjd: 60845.804196247
     wavelength_min: 3.8112999999999997
     wavelength_max: 4.43
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/5/level2_2025W25_2A_0075_2D5_spx_l2b-v20-2025-254.fits
+    t_min: 60845.803530058
+    t_max: 60845.804862436
+  - obs_id: 2025W25_2A_0075_2
+    band: D2
+    mjd: 60845.804196247
+    wavelength_min: 1.1033
+    wavelength_max: 1.6499
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/2/level2_2025W25_2A_0075_2D2_spx_l2b-v20-2025-254.fits
     t_min: 60845.803530058
     t_max: 60845.804862436
   - obs_id: 2025W25_2A_0075_3
@@ -506,14 +506,6 @@ query_results:
     t_min: 60845.806514583
     t_max: 60845.807846962
   - obs_id: 2025W25_2A_0206_2
-    band: D2
-    mjd: 60846.347269904494
-    wavelength_min: 1.1033
-    wavelength_max: 1.6499
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/2/level2_2025W25_2A_0206_2D2_spx_l2b-v20-2025-254.fits
-    t_min: 60846.346603715
-    t_max: 60846.347936094
-  - obs_id: 2025W25_2A_0206_2
     band: D5
     mjd: 60846.347269904494
     wavelength_min: 3.8112999999999997
@@ -521,14 +513,14 @@ query_results:
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/5/level2_2025W25_2A_0206_2D5_spx_l2b-v20-2025-254.fits
     t_min: 60846.346603715
     t_max: 60846.347936094
-  - obs_id: 2025W25_2A_0206_3
-    band: D5
-    mjd: 60846.34876215
-    wavelength_min: 3.8112999999999997
-    wavelength_max: 4.43
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/5/level2_2025W25_2A_0206_3D5_spx_l2b-v20-2025-254.fits
-    t_min: 60846.348095961
-    t_max: 60846.349428339
+  - obs_id: 2025W25_2A_0206_2
+    band: D2
+    mjd: 60846.347269904494
+    wavelength_min: 1.1033
+    wavelength_max: 1.6499
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/2/level2_2025W25_2A_0206_2D2_spx_l2b-v20-2025-254.fits
+    t_min: 60846.346603715
+    t_max: 60846.347936094
   - obs_id: 2025W25_2A_0206_3
     band: D2
     mjd: 60846.34876215
@@ -537,20 +529,28 @@ query_results:
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/2/level2_2025W25_2A_0206_3D2_spx_l2b-v20-2025-254.fits
     t_min: 60846.348095961
     t_max: 60846.349428339
-  - obs_id: 2025W25_2A_0206_4
-    band: D2
-    mjd: 60846.350254407
-    wavelength_min: 1.1033
-    wavelength_max: 1.6499
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/2/level2_2025W25_2A_0206_4D2_spx_l2b-v20-2025-254.fits
-    t_min: 60846.349588218
-    t_max: 60846.350920596
+  - obs_id: 2025W25_2A_0206_3
+    band: D5
+    mjd: 60846.34876215
+    wavelength_min: 3.8112999999999997
+    wavelength_max: 4.43
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/5/level2_2025W25_2A_0206_3D5_spx_l2b-v20-2025-254.fits
+    t_min: 60846.348095961
+    t_max: 60846.349428339
   - obs_id: 2025W25_2A_0206_4
     band: D5
     mjd: 60846.350254407
     wavelength_min: 3.8112999999999997
     wavelength_max: 4.43
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/5/level2_2025W25_2A_0206_4D5_spx_l2b-v20-2025-254.fits
+    t_min: 60846.349588218
+    t_max: 60846.350920596
+  - obs_id: 2025W25_2A_0206_4
+    band: D2
+    mjd: 60846.350254407
+    wavelength_min: 1.1033
+    wavelength_max: 1.6499
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W25_2A/l2b-v20-2025-254/2/level2_2025W25_2A_0206_4D2_spx_l2b-v20-2025-254.fits
     t_min: 60846.349588218
     t_max: 60846.350920596
   - obs_id: 2025W25_2A_0241_1
@@ -666,14 +666,6 @@ query_results:
     t_min: 60849.814227882
     t_max: 60849.81556026
   - obs_id: 2025W26_1A_0240_1
-    band: D4
-    mjd: 60850.0142698005
-    wavelength_min: 2.4027
-    wavelength_max: 3.8472999999999997
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/4/level2_2025W26_1A_0240_1D4_spx_l2b-v20-2025-257.fits
-    t_min: 60850.013603611
-    t_max: 60850.01493599
-  - obs_id: 2025W26_1A_0240_1
     band: D1
     mjd: 60850.0142698005
     wavelength_min: 0.7455
@@ -681,20 +673,28 @@ query_results:
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/1/level2_2025W26_1A_0240_1D1_spx_l2b-v20-2025-257.fits
     t_min: 60850.013603611
     t_max: 60850.01493599
-  - obs_id: 2025W26_1A_0240_2
+  - obs_id: 2025W26_1A_0240_1
     band: D4
-    mjd: 60850.0157620455
+    mjd: 60850.0142698005
     wavelength_min: 2.4027
     wavelength_max: 3.8472999999999997
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/4/level2_2025W26_1A_0240_2D4_spx_l2b-v20-2025-257.fits
-    t_min: 60850.015095856
-    t_max: 60850.016428235
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/4/level2_2025W26_1A_0240_1D4_spx_l2b-v20-2025-257.fits
+    t_min: 60850.013603611
+    t_max: 60850.01493599
   - obs_id: 2025W26_1A_0240_2
     band: D1
     mjd: 60850.0157620455
     wavelength_min: 0.7455
     wavelength_max: 1.1167
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/1/level2_2025W26_1A_0240_2D1_spx_l2b-v20-2025-257.fits
+    t_min: 60850.015095856
+    t_max: 60850.016428235
+  - obs_id: 2025W26_1A_0240_2
+    band: D4
+    mjd: 60850.0157620455
+    wavelength_min: 2.4027
+    wavelength_max: 3.8472999999999997
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/4/level2_2025W26_1A_0240_2D4_spx_l2b-v20-2025-257.fits
     t_min: 60850.015095856
     t_max: 60850.016428235
   - obs_id: 2025W26_1A_0240_3
@@ -714,14 +714,6 @@ query_results:
     t_min: 60850.016588125
     t_max: 60850.017920503
   - obs_id: 2025W26_1A_0240_4
-    band: D4
-    mjd: 60850.0187465595
-    wavelength_min: 2.4027
-    wavelength_max: 3.8472999999999997
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/4/level2_2025W26_1A_0240_4D4_spx_l2b-v20-2025-257.fits
-    t_min: 60850.01808037
-    t_max: 60850.019412749
-  - obs_id: 2025W26_1A_0240_4
     band: D1
     mjd: 60850.0187465595
     wavelength_min: 0.7455
@@ -729,20 +721,28 @@ query_results:
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/1/level2_2025W26_1A_0240_4D1_spx_l2b-v20-2025-257.fits
     t_min: 60850.01808037
     t_max: 60850.019412749
-  - obs_id: 2025W26_1A_0298_1
-    band: D1
-    mjd: 60850.354095055
-    wavelength_min: 0.7455
-    wavelength_max: 1.1167
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/1/level2_2025W26_1A_0298_1D1_spx_l2b-v20-2025-257.fits
-    t_min: 60850.353428866
-    t_max: 60850.354761244
+  - obs_id: 2025W26_1A_0240_4
+    band: D4
+    mjd: 60850.0187465595
+    wavelength_min: 2.4027
+    wavelength_max: 3.8472999999999997
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/4/level2_2025W26_1A_0240_4D4_spx_l2b-v20-2025-257.fits
+    t_min: 60850.01808037
+    t_max: 60850.019412749
   - obs_id: 2025W26_1A_0298_1
     band: D4
     mjd: 60850.354095055
     wavelength_min: 2.4027
     wavelength_max: 3.8472999999999997
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/4/level2_2025W26_1A_0298_1D4_spx_l2b-v20-2025-257.fits
+    t_min: 60850.353428866
+    t_max: 60850.354761244
+  - obs_id: 2025W26_1A_0298_1
+    band: D1
+    mjd: 60850.354095055
+    wavelength_min: 0.7455
+    wavelength_max: 1.1167
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/1/level2_2025W26_1A_0298_1D1_spx_l2b-v20-2025-257.fits
     t_min: 60850.353428866
     t_max: 60850.354761244
   - obs_id: 2025W26_1A_0298_2
@@ -778,14 +778,6 @@ query_results:
     t_min: 60851.848098484
     t_max: 60851.849430862
   - obs_id: 2025W26_1A_0553_2
-    band: D1
-    mjd: 60851.85025693
-    wavelength_min: 0.7455
-    wavelength_max: 1.1167
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/1/level2_2025W26_1A_0553_2D1_spx_l2b-v20-2025-257.fits
-    t_min: 60851.849590741
-    t_max: 60851.850923119
-  - obs_id: 2025W26_1A_0553_2
     band: D4
     mjd: 60851.85025693
     wavelength_min: 2.4027
@@ -793,20 +785,28 @@ query_results:
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/4/level2_2025W26_1A_0553_2D4_spx_l2b-v20-2025-257.fits
     t_min: 60851.849590741
     t_max: 60851.850923119
-  - obs_id: 2025W26_1A_0553_3
-    band: D4
-    mjd: 60851.851749175505
-    wavelength_min: 2.4027
-    wavelength_max: 3.8472999999999997
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/4/level2_2025W26_1A_0553_3D4_spx_l2b-v20-2025-257.fits
-    t_min: 60851.851082986
-    t_max: 60851.852415365
+  - obs_id: 2025W26_1A_0553_2
+    band: D1
+    mjd: 60851.85025693
+    wavelength_min: 0.7455
+    wavelength_max: 1.1167
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/1/level2_2025W26_1A_0553_2D1_spx_l2b-v20-2025-257.fits
+    t_min: 60851.849590741
+    t_max: 60851.850923119
   - obs_id: 2025W26_1A_0553_3
     band: D1
     mjd: 60851.851749175505
     wavelength_min: 0.7455
     wavelength_max: 1.1167
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/1/level2_2025W26_1A_0553_3D1_spx_l2b-v20-2025-257.fits
+    t_min: 60851.851082986
+    t_max: 60851.852415365
+  - obs_id: 2025W26_1A_0553_3
+    band: D4
+    mjd: 60851.851749175505
+    wavelength_min: 2.4027
+    wavelength_max: 3.8472999999999997
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_1A/l2b-v20-2025-257/4/level2_2025W26_1A_0553_3D4_spx_l2b-v20-2025-257.fits
     t_min: 60851.851082986
     t_max: 60851.852415365
   - obs_id: 2025W26_1A_0553_4
@@ -842,19 +842,19 @@ query_results:
     t_min: 60852.595486574
     t_max: 60852.596818953
   - obs_id: 2025W26_2A_0026_2
-    band: D1
-    mjd: 60852.5976627865
-    wavelength_min: 0.7455
-    wavelength_max: 1.1167
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_2A/l2b-v20-2025-257/1/level2_2025W26_2A_0026_2D1_spx_l2b-v20-2025-257.fits
-    t_min: 60852.596996597
-    t_max: 60852.598328976
-  - obs_id: 2025W26_2A_0026_2
     band: D4
     mjd: 60852.5976627865
     wavelength_min: 2.4027
     wavelength_max: 3.8472999999999997
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_2A/l2b-v20-2025-257/4/level2_2025W26_2A_0026_2D4_spx_l2b-v20-2025-257.fits
+    t_min: 60852.596996597
+    t_max: 60852.598328976
+  - obs_id: 2025W26_2A_0026_2
+    band: D1
+    mjd: 60852.5976627865
+    wavelength_min: 0.7455
+    wavelength_max: 1.1167
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_2A/l2b-v20-2025-257/1/level2_2025W26_2A_0026_2D1_spx_l2b-v20-2025-257.fits
     t_min: 60852.596996597
     t_max: 60852.598328976
   - obs_id: 2025W26_2A_0026_3
@@ -906,19 +906,19 @@ query_results:
     t_min: 60853.070840359
     t_max: 60853.072172737
   - obs_id: 2025W26_2A_0142_2
-    band: D1
-    mjd: 60853.073016548
-    wavelength_min: 0.7455
-    wavelength_max: 1.1167
-    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_2A/l2b-v20-2025-257/1/level2_2025W26_2A_0142_2D1_spx_l2b-v20-2025-257.fits
-    t_min: 60853.072350359
-    t_max: 60853.073682737
-  - obs_id: 2025W26_2A_0142_2
     band: D4
     mjd: 60853.073016548
     wavelength_min: 2.4027
     wavelength_max: 3.8472999999999997
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_2A/l2b-v20-2025-257/4/level2_2025W26_2A_0142_2D4_spx_l2b-v20-2025-257.fits
+    t_min: 60853.072350359
+    t_max: 60853.073682737
+  - obs_id: 2025W26_2A_0142_2
+    band: D1
+    mjd: 60853.073016548
+    wavelength_min: 0.7455
+    wavelength_max: 1.1167
+    download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W26_2A/l2b-v20-2025-257/1/level2_2025W26_2A_0142_2D1_spx_l2b-v20-2025-257.fits
     t_min: 60853.072350359
     t_max: 60853.073682737
   - obs_id: 2025W26_2A_0142_3
@@ -945,7 +945,7 @@ query_results:
     download_url: https://irsa.ipac.caltech.edu/ibe/data/spherex/qr2/level2/2025W29_2A/l2b-v20-2025-262/3/level2_2025W29_2A_0482_1D3_spx_l2b-v20-2025-262.fits
     t_min: 60875.362138843
     t_max: 60875.363471221
-  query_time: '2025-11-13T00:34:04.839400'
+  query_time: '2026-01-14T15:13:34.768857'
   total_size_gb: 0.5136001110076904
   time_span_days: 33.09301097250136
   band_counts:
@@ -960,8 +960,8 @@ downloaded_files:
 - demo_data/cloverleaf/data/D6/2025W25_1B_0062_1.fits
 - demo_data/cloverleaf/data/D3/2025W25_1B_0062_2.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0062_2.fits
-- demo_data/cloverleaf/data/D3/2025W25_1B_0062_3.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0062_3.fits
+- demo_data/cloverleaf/data/D3/2025W25_1B_0062_3.fits
 - demo_data/cloverleaf/data/D3/2025W25_1B_0062_4.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0062_4.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0178_1.fits
@@ -973,48 +973,48 @@ downloaded_files:
 - demo_data/cloverleaf/data/D3/2025W25_1B_0178_4.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0202_1.fits
 - demo_data/cloverleaf/data/D3/2025W25_1B_0202_1.fits
-- demo_data/cloverleaf/data/D3/2025W25_1B_0329_3.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0329_3.fits
-- demo_data/cloverleaf/data/D3/2025W25_1B_0329_4.fits
+- demo_data/cloverleaf/data/D3/2025W25_1B_0329_3.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0329_4.fits
-- demo_data/cloverleaf/data/D3/2025W25_1B_0468_1.fits
+- demo_data/cloverleaf/data/D3/2025W25_1B_0329_4.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0468_1.fits
+- demo_data/cloverleaf/data/D3/2025W25_1B_0468_1.fits
 - demo_data/cloverleaf/data/D3/2025W25_1B_0468_2.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0468_2.fits
 - demo_data/cloverleaf/data/D3/2025W25_1B_0468_3.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0468_3.fits
-- demo_data/cloverleaf/data/D6/2025W25_1B_0468_4.fits
 - demo_data/cloverleaf/data/D3/2025W25_1B_0468_4.fits
+- demo_data/cloverleaf/data/D6/2025W25_1B_0468_4.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0503_1.fits
 - demo_data/cloverleaf/data/D3/2025W25_1B_0503_1.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0503_2.fits
 - demo_data/cloverleaf/data/D3/2025W25_1B_0503_2.fits
-- demo_data/cloverleaf/data/D5/2025W25_1B_0616_1.fits
 - demo_data/cloverleaf/data/D2/2025W25_1B_0616_1.fits
+- demo_data/cloverleaf/data/D5/2025W25_1B_0616_1.fits
 - demo_data/cloverleaf/data/D2/2025W25_1B_0616_2.fits
 - demo_data/cloverleaf/data/D5/2025W25_1B_0616_2.fits
 - demo_data/cloverleaf/data/D5/2025W25_1B_0616_3.fits
 - demo_data/cloverleaf/data/D2/2025W25_1B_0616_3.fits
-- demo_data/cloverleaf/data/D5/2025W25_1B_0616_4.fits
 - demo_data/cloverleaf/data/D2/2025W25_1B_0616_4.fits
+- demo_data/cloverleaf/data/D5/2025W25_1B_0616_4.fits
 - demo_data/cloverleaf/data/D5/2025W25_1B_0679_1.fits
 - demo_data/cloverleaf/data/D2/2025W25_1B_0679_1.fits
 - demo_data/cloverleaf/data/D6/2025W25_1B_0746_1.fits
 - demo_data/cloverleaf/data/D3/2025W25_1B_0746_1.fits
-- demo_data/cloverleaf/data/D5/2025W25_2A_0075_1.fits
 - demo_data/cloverleaf/data/D2/2025W25_2A_0075_1.fits
-- demo_data/cloverleaf/data/D2/2025W25_2A_0075_2.fits
+- demo_data/cloverleaf/data/D5/2025W25_2A_0075_1.fits
 - demo_data/cloverleaf/data/D5/2025W25_2A_0075_2.fits
+- demo_data/cloverleaf/data/D2/2025W25_2A_0075_2.fits
 - demo_data/cloverleaf/data/D2/2025W25_2A_0075_3.fits
 - demo_data/cloverleaf/data/D5/2025W25_2A_0075_3.fits
 - demo_data/cloverleaf/data/D2/2025W25_2A_0075_4.fits
 - demo_data/cloverleaf/data/D5/2025W25_2A_0075_4.fits
-- demo_data/cloverleaf/data/D2/2025W25_2A_0206_2.fits
 - demo_data/cloverleaf/data/D5/2025W25_2A_0206_2.fits
-- demo_data/cloverleaf/data/D5/2025W25_2A_0206_3.fits
+- demo_data/cloverleaf/data/D2/2025W25_2A_0206_2.fits
 - demo_data/cloverleaf/data/D2/2025W25_2A_0206_3.fits
-- demo_data/cloverleaf/data/D2/2025W25_2A_0206_4.fits
+- demo_data/cloverleaf/data/D5/2025W25_2A_0206_3.fits
 - demo_data/cloverleaf/data/D5/2025W25_2A_0206_4.fits
+- demo_data/cloverleaf/data/D2/2025W25_2A_0206_4.fits
 - demo_data/cloverleaf/data/D2/2025W25_2A_0241_1.fits
 - demo_data/cloverleaf/data/D5/2025W25_2A_0241_1.fits
 - demo_data/cloverleaf/data/D2/2025W25_2A_0241_2.fits
@@ -1029,38 +1029,38 @@ downloaded_files:
 - demo_data/cloverleaf/data/D5/2025W25_2A_0366_2.fits
 - demo_data/cloverleaf/data/D4/2025W26_1A_0204_4.fits
 - demo_data/cloverleaf/data/D1/2025W26_1A_0204_4.fits
-- demo_data/cloverleaf/data/D4/2025W26_1A_0240_1.fits
 - demo_data/cloverleaf/data/D1/2025W26_1A_0240_1.fits
-- demo_data/cloverleaf/data/D4/2025W26_1A_0240_2.fits
+- demo_data/cloverleaf/data/D4/2025W26_1A_0240_1.fits
 - demo_data/cloverleaf/data/D1/2025W26_1A_0240_2.fits
+- demo_data/cloverleaf/data/D4/2025W26_1A_0240_2.fits
 - demo_data/cloverleaf/data/D1/2025W26_1A_0240_3.fits
 - demo_data/cloverleaf/data/D4/2025W26_1A_0240_3.fits
-- demo_data/cloverleaf/data/D4/2025W26_1A_0240_4.fits
 - demo_data/cloverleaf/data/D1/2025W26_1A_0240_4.fits
-- demo_data/cloverleaf/data/D1/2025W26_1A_0298_1.fits
+- demo_data/cloverleaf/data/D4/2025W26_1A_0240_4.fits
 - demo_data/cloverleaf/data/D4/2025W26_1A_0298_1.fits
+- demo_data/cloverleaf/data/D1/2025W26_1A_0298_1.fits
 - demo_data/cloverleaf/data/D4/2025W26_1A_0298_2.fits
 - demo_data/cloverleaf/data/D1/2025W26_1A_0298_2.fits
 - demo_data/cloverleaf/data/D1/2025W26_1A_0553_1.fits
 - demo_data/cloverleaf/data/D4/2025W26_1A_0553_1.fits
-- demo_data/cloverleaf/data/D1/2025W26_1A_0553_2.fits
 - demo_data/cloverleaf/data/D4/2025W26_1A_0553_2.fits
-- demo_data/cloverleaf/data/D4/2025W26_1A_0553_3.fits
+- demo_data/cloverleaf/data/D1/2025W26_1A_0553_2.fits
 - demo_data/cloverleaf/data/D1/2025W26_1A_0553_3.fits
+- demo_data/cloverleaf/data/D4/2025W26_1A_0553_3.fits
 - demo_data/cloverleaf/data/D4/2025W26_1A_0553_4.fits
 - demo_data/cloverleaf/data/D1/2025W26_1A_0553_4.fits
 - demo_data/cloverleaf/data/D4/2025W26_2A_0026_1.fits
 - demo_data/cloverleaf/data/D1/2025W26_2A_0026_1.fits
-- demo_data/cloverleaf/data/D1/2025W26_2A_0026_2.fits
 - demo_data/cloverleaf/data/D4/2025W26_2A_0026_2.fits
+- demo_data/cloverleaf/data/D1/2025W26_2A_0026_2.fits
 - demo_data/cloverleaf/data/D4/2025W26_2A_0026_3.fits
 - demo_data/cloverleaf/data/D1/2025W26_2A_0026_3.fits
 - demo_data/cloverleaf/data/D4/2025W26_2A_0026_4.fits
 - demo_data/cloverleaf/data/D1/2025W26_2A_0026_4.fits
 - demo_data/cloverleaf/data/D4/2025W26_2A_0142_1.fits
 - demo_data/cloverleaf/data/D1/2025W26_2A_0142_1.fits
-- demo_data/cloverleaf/data/D1/2025W26_2A_0142_2.fits
 - demo_data/cloverleaf/data/D4/2025W26_2A_0142_2.fits
+- demo_data/cloverleaf/data/D1/2025W26_2A_0142_2.fits
 - demo_data/cloverleaf/data/D1/2025W26_2A_0142_3.fits
 - demo_data/cloverleaf/data/D4/2025W26_2A_0142_3.fits
 - demo_data/cloverleaf/data/D3/2025W29_2A_0482_1.fits
@@ -1115,18 +1115,6 @@ photometry_results:
   mag_ab_error: 0.04879748326397411
 - obs_id: 2025W25_1B_0062_3
   mjd: 60842.272778573504
-  flux: 1024.1675037571295
-  flux_error: 37.979805934138184
-  wavelength: 2.0316808726933
-  bandwidth: 0.05004140296778268
-  flag: 2097152
-  pix_x: 29.779714895283796
-  pix_y: 29.163495266462753
-  band: D3
-  mag_ab: 16.374072520489698
-  mag_ab_error: 0.04026299428668474
-- obs_id: 2025W25_1B_0062_3
-  mjd: 60842.272778573504
   flux: 3330.850552415587
   flux_error: 154.56489521920747
   wavelength: 4.726364447634838
@@ -1137,6 +1125,18 @@ photometry_results:
   band: D6
   mag_ab: 15.093612131659384
   mag_ab_error: 0.05038253745801859
+- obs_id: 2025W25_1B_0062_3
+  mjd: 60842.272778573504
+  flux: 1024.1675037571295
+  flux_error: 37.979805934138184
+  wavelength: 2.0316808726933
+  bandwidth: 0.05004140296778268
+  flag: 2097152
+  pix_x: 29.779714895283796
+  pix_y: 29.163495266462753
+  band: D3
+  mag_ab: 16.374072520489698
+  mag_ab_error: 0.04026299428668474
 - obs_id: 2025W25_1B_0062_4
   mjd: 60842.274270819
   flux: 1208.1182154713104
@@ -1271,18 +1271,6 @@ photometry_results:
   mag_ab_error: 0.03282152026995101
 - obs_id: 2025W25_1B_0329_3
   mjd: 60843.698395784
-  flux: 1253.9364692463355
-  flux_error: 45.04284126680683
-  wavelength: 1.6327272193661235
-  bandwidth: 0.0402149564900375
-  flag: 2097152
-  pix_x: 29.09072260120295
-  pix_y: 29.466300401270516
-  band: D3
-  mag_ab: 16.154311166248668
-  mag_ab_error: 0.03900089416646387
-- obs_id: 2025W25_1B_0329_3
-  mjd: 60843.698395784
   flux: 2134.89982577249
   flux_error: 98.29238758387723
   wavelength: 4.410831508066616
@@ -1293,18 +1281,18 @@ photometry_results:
   band: D6
   mag_ab: 15.576556245549263
   mag_ab_error: 0.04998810837099517
-- obs_id: 2025W25_1B_0329_4
-  mjd: 60843.699888041
-  flux: 1207.5716994964855
-  flux_error: 45.05381379061885
-  wavelength: 1.670540514052757
-  bandwidth: 0.04114631866355129
+- obs_id: 2025W25_1B_0329_3
+  mjd: 60843.698395784
+  flux: 1253.9364692463355
+  flux_error: 45.04284126680683
+  wavelength: 1.6327272193661235
+  bandwidth: 0.0402149564900375
   flag: 2097152
-  pix_x: 29.357862650200964
-  pix_y: 29.033103024356905
+  pix_x: 29.09072260120295
+  pix_y: 29.466300401270516
   band: D3
-  mag_ab: 16.19521768400586
-  mag_ab_error: 0.040508200726551015
+  mag_ab: 16.154311166248668
+  mag_ab_error: 0.03900089416646387
 - obs_id: 2025W25_1B_0329_4
   mjd: 60843.699888041
   flux: 2620.7830690565293
@@ -1317,18 +1305,18 @@ photometry_results:
   band: D6
   mag_ab: 15.353922313916136
   mag_ab_error: 0.044642677462819344
-- obs_id: 2025W25_1B_0468_1
-  mjd: 60844.239586363
-  flux: 1521.3556557293086
-  flux_error: 47.26936912777221
-  wavelength: 1.7085323583264167
-  bandwidth: 0.042082078659354774
+- obs_id: 2025W25_1B_0329_4
+  mjd: 60843.699888041
+  flux: 1207.5716994964855
+  flux_error: 45.05381379061885
+  wavelength: 1.670540514052757
+  bandwidth: 0.04114631866355129
   flag: 2097152
-  pix_x: 29.312065057751653
-  pix_y: 29.527083301510185
+  pix_x: 29.357862650200964
+  pix_y: 29.033103024356905
   band: D3
-  mag_ab: 15.944423116634617
-  mag_ab_error: 0.03373442971393542
+  mag_ab: 16.19521768400586
+  mag_ab_error: 0.040508200726551015
 - obs_id: 2025W25_1B_0468_1
   mjd: 60844.239586363
   flux: 2102.276286966782
@@ -1341,6 +1329,18 @@ photometry_results:
   band: D6
   mag_ab: 15.593275520935897
   mag_ab_error: 0.05584176741319578
+- obs_id: 2025W25_1B_0468_1
+  mjd: 60844.239586363
+  flux: 1521.3556557293086
+  flux_error: 47.26936912777221
+  wavelength: 1.7085323583264167
+  bandwidth: 0.042082078659354774
+  flag: 2097152
+  pix_x: 29.312065057751653
+  pix_y: 29.527083301510185
+  band: D3
+  mag_ab: 15.944423116634617
+  mag_ab_error: 0.03373442971393542
 - obs_id: 2025W25_1B_0468_2
   mjd: 60844.241078608
   flux: 1788.9478159860903
@@ -1391,18 +1391,6 @@ photometry_results:
   mag_ab_error: 0.04159870829090462
 - obs_id: 2025W25_1B_0468_4
   mjd: 60844.244063122
-  flux: 3517.962982923147
-  flux_error: 119.89163347754067
-  wavelength: 4.573437842941074
-  bandwidth: 0.035785897372221064
-  flag: 2097157
-  pix_x: 29.9510442302455
-  pix_y: 29.583210131471404
-  band: D6
-  mag_ab: 15.034271836582967
-  mag_ab_error: 0.03700172166280051
-- obs_id: 2025W25_1B_0468_4
-  mjd: 60844.244063122
   flux: 1253.6893197428483
   flux_error: 42.93375604868367
   wavelength: 1.8309660862678907
@@ -1413,6 +1401,18 @@ photometry_results:
   band: D3
   mag_ab: 16.154525184756515
   mag_ab_error: 0.037182045514969064
+- obs_id: 2025W25_1B_0468_4
+  mjd: 60844.244063122
+  flux: 3517.962982923147
+  flux_error: 119.89163347754067
+  wavelength: 4.573437842941074
+  bandwidth: 0.035785897372221064
+  flag: 2097157
+  pix_x: 29.9510442302455
+  pix_y: 29.583210131471404
+  band: D6
+  mag_ab: 15.034271836582967
+  mag_ab_error: 0.03700172166280051
 - obs_id: 2025W25_1B_0503_1
   mjd: 60844.3759143605
   flux: 2919.277254559984
@@ -1463,18 +1463,6 @@ photometry_results:
   mag_ab_error: 0.03805244789512846
 - obs_id: 2025W25_1B_0616_1
   mjd: 60844.851623446
-  flux: 2652.837755780696
-  flux_error: 104.66666807445819
-  wavelength: 4.251006376733552
-  bandwidth: 0.03809145612813858
-  flag: 2097152
-  pix_x: 29.294333048395885
-  pix_y: 29.62900589472578
-  band: D5
-  mag_ab: 15.340723275273909
-  mag_ab_error: 0.042837294030594865
-- obs_id: 2025W25_1B_0616_1
-  mjd: 60844.851623446
   flux: 1124.5694411031957
   flux_error: 43.78274135389111
   wavelength: 1.4802744925285263
@@ -1485,6 +1473,18 @@ photometry_results:
   band: D2
   mag_ab: 16.272534305313407
   mag_ab_error: 0.04227085113112049
+- obs_id: 2025W25_1B_0616_1
+  mjd: 60844.851623446
+  flux: 2652.837755780696
+  flux_error: 104.66666807445819
+  wavelength: 4.251006376733552
+  bandwidth: 0.03809145612813858
+  flag: 2097152
+  pix_x: 29.294333048395885
+  pix_y: 29.62900589472578
+  band: D5
+  mag_ab: 15.340723275273909
+  mag_ab_error: 0.042837294030594865
 - obs_id: 2025W25_1B_0616_2
   mjd: 60844.8531156915
   flux: 1153.2771300179484
@@ -1535,18 +1535,6 @@ photometry_results:
   mag_ab_error: 0.03646813612788193
 - obs_id: 2025W25_1B_0616_4
   mjd: 60844.8561002055
-  flux: 3197.9835857897237
-  flux_error: 118.94142593799042
-  wavelength: 4.361341480432371
-  bandwidth: 0.03908012159433502
-  flag: 2097152
-  pix_x: 29.67456389458238
-  pix_y: 29.37207432411524
-  band: D5
-  mag_ab: 15.137809424191182
-  mag_ab_error: 0.04038138687148505
-- obs_id: 2025W25_1B_0616_4
-  mjd: 60844.8561002055
   flux: 1174.5215531855724
   flux_error: 42.24544624861963
   wavelength: 1.5893549932220168
@@ -1557,6 +1545,18 @@ photometry_results:
   band: D2
   mag_ab: 16.225347523112752
   mag_ab_error: 0.039051995558435575
+- obs_id: 2025W25_1B_0616_4
+  mjd: 60844.8561002055
+  flux: 3197.9835857897237
+  flux_error: 118.94142593799042
+  wavelength: 4.361341480432371
+  bandwidth: 0.03908012159433502
+  flag: 2097152
+  pix_x: 29.67456389458238
+  pix_y: 29.37207432411524
+  band: D5
+  mag_ab: 15.137809424191182
+  mag_ab_error: 0.04038138687148505
 - obs_id: 2025W25_1B_0679_1
   mjd: 60845.123444511
   flux: 2963.479587719605
@@ -1607,18 +1607,6 @@ photometry_results:
   mag_ab_error: 0.036523419935526595
 - obs_id: 2025W25_2A_0075_1
   mjd: 60845.8027040015
-  flux: 2030.3935014633623
-  flux_error: 71.66616762750957
-  wavelength: 4.107450941048568
-  bandwidth: 0.03680511618992112
-  flag: 2097157
-  pix_x: 29.590734066015155
-  pix_y: 29.078858207623977
-  band: D5
-  mag_ab: 15.631049463156806
-  mag_ab_error: 0.03832289297290002
-- obs_id: 2025W25_2A_0075_1
-  mjd: 60845.8027040015
   flux: 1191.8198176927174
   flux_error: 46.19340976999592
   wavelength: 1.3461490902081692
@@ -1629,18 +1617,18 @@ photometry_results:
   band: D2
   mag_ab: 16.209473493403614
   mag_ab_error: 0.04208174479394624
-- obs_id: 2025W25_2A_0075_2
-  mjd: 60845.804196247
-  flux: 1224.8336267270931
-  flux_error: 47.185250146977
-  wavelength: 1.3789274189112324
-  bandwidth: 0.033307423978795256
-  flag: 2097152
-  pix_x: 29.291640134466796
-  pix_y: 29.955552100225205
-  band: D2
-  mag_ab: 16.17980724743527
-  mag_ab_error: 0.04182668837402565
+- obs_id: 2025W25_2A_0075_1
+  mjd: 60845.8027040015
+  flux: 2030.3935014633623
+  flux_error: 71.66616762750957
+  wavelength: 4.107450941048568
+  bandwidth: 0.03680511618992112
+  flag: 2097157
+  pix_x: 29.590734066015155
+  pix_y: 29.078858207623977
+  band: D5
+  mag_ab: 15.631049463156806
+  mag_ab_error: 0.03832289297290002
 - obs_id: 2025W25_2A_0075_2
   mjd: 60845.804196247
   flux: 2339.5554953931505
@@ -1653,6 +1641,18 @@ photometry_results:
   band: D5
   mag_ab: 15.4771666216837
   mag_ab_error: 0.04495752623735943
+- obs_id: 2025W25_2A_0075_2
+  mjd: 60845.804196247
+  flux: 1224.8336267270931
+  flux_error: 47.185250146977
+  wavelength: 1.3789274189112324
+  bandwidth: 0.033307423978795256
+  flag: 2097152
+  pix_x: 29.291640134466796
+  pix_y: 29.955552100225205
+  band: D2
+  mag_ab: 16.17980724743527
+  mag_ab_error: 0.04182668837402565
 - obs_id: 2025W25_2A_0075_3
   mjd: 60845.805688515495
   flux: 1145.9776964238831
@@ -1703,18 +1703,6 @@ photometry_results:
   mag_ab_error: 0.04476192657260627
 - obs_id: 2025W25_2A_0206_2
   mjd: 60846.347269904494
-  flux: 1006.9591849477955
-  flux_error: 45.063563475855986
-  wavelength: 1.1024432098403893
-  bandwidth: 0.026629061801271035
-  flag: 2097152
-  pix_x: 29.18345642889549
-  pix_y: 29.749441769959013
-  band: D2
-  mag_ab: 16.392470330843317
-  mag_ab_error: 0.0485890025261446
-- obs_id: 2025W25_2A_0206_2
-  mjd: 60846.347269904494
   flux: 2526.441566055206
   flux_error: 95.53562040150983
   wavelength: 3.8147944582310847
@@ -1725,18 +1713,18 @@ photometry_results:
   band: D5
   mag_ab: 15.39372685521414
   mag_ab_error: 0.04105635503611013
-- obs_id: 2025W25_2A_0206_3
-  mjd: 60846.34876215
-  flux: 3094.9778595556727
-  flux_error: 103.15592762720708
-  wavelength: 3.8483325320332473
-  bandwidth: 0.03448326704161355
+- obs_id: 2025W25_2A_0206_2
+  mjd: 60846.347269904494
+  flux: 1006.9591849477955
+  flux_error: 45.063563475855986
+  wavelength: 1.1024432098403893
+  bandwidth: 0.026629061801271035
   flag: 2097152
-  pix_x: 29.62170665890298
-  pix_y: 29.14014042141763
-  band: D5
-  mag_ab: 15.173356133578302
-  mag_ab_error: 0.03618769840775121
+  pix_x: 29.18345642889549
+  pix_y: 29.749441769959013
+  band: D2
+  mag_ab: 16.392470330843317
+  mag_ab_error: 0.0485890025261446
 - obs_id: 2025W25_2A_0206_3
   mjd: 60846.34876215
   flux: 1185.6123590329594
@@ -1749,18 +1737,18 @@ photometry_results:
   band: D2
   mag_ab: 16.215143205446616
   mag_ab_error: 0.04212179725757169
-- obs_id: 2025W25_2A_0206_4
-  mjd: 60846.350254407
-  flux: 1073.6044258700515
-  flux_error: 42.86465813384779
-  wavelength: 1.154486773620293
-  bandwidth: 0.02788615286110182
+- obs_id: 2025W25_2A_0206_3
+  mjd: 60846.34876215
+  flux: 3094.9778595556727
+  flux_error: 103.15592762720708
+  wavelength: 3.8483325320332473
+  bandwidth: 0.03448326704161355
   flag: 2097152
-  pix_x: 29.17577355495748
-  pix_y: 29.02471039483958
-  band: D2
-  mag_ab: 16.322889267045902
-  mag_ab_error: 0.04334903072217002
+  pix_x: 29.62170665890298
+  pix_y: 29.14014042141763
+  band: D5
+  mag_ab: 15.173356133578302
+  mag_ab_error: 0.03618769840775121
 - obs_id: 2025W25_2A_0206_4
   mjd: 60846.350254407
   flux: 2641.88915961759
@@ -1773,6 +1761,18 @@ photometry_results:
   band: D5
   mag_ab: 15.345213517878896
   mag_ab_error: 0.03969215728830842
+- obs_id: 2025W25_2A_0206_4
+  mjd: 60846.350254407
+  flux: 1073.6044258700515
+  flux_error: 42.86465813384779
+  wavelength: 1.154486773620293
+  bandwidth: 0.02788615286110182
+  flag: 2097152
+  pix_x: 29.17577355495748
+  pix_y: 29.02471039483958
+  band: D2
+  mag_ab: 16.322889267045902
+  mag_ab_error: 0.04334903072217002
 - obs_id: 2025W25_2A_0241_1
   mjd: 60846.5500920225
   flux: 1111.0594827347004
@@ -1943,18 +1943,6 @@ photometry_results:
   mag_ab_error: 0.08438040800261344
 - obs_id: 2025W26_1A_0240_1
   mjd: 60850.0142698005
-  flux: 1274.5801292345993
-  flux_error: 38.20219628519606
-  wavelength: 2.5010939194048905
-  bandwidth: 0.07166457781143301
-  flag: 2097152
-  pix_x: 29.357806817723095
-  pix_y: 29.583406873370222
-  band: D4
-  mag_ab: 16.136582141187993
-  mag_ab_error: 0.03254209496661589
-- obs_id: 2025W26_1A_0240_1
-  mjd: 60850.0142698005
   flux: 668.961869547927
   flux_error: 42.22100225099139
   wavelength: 0.7684241666910278
@@ -1965,18 +1953,18 @@ photometry_results:
   band: D1
   mag_ab: 16.836496590172636
   mag_ab_error: 0.06852538662039782
-- obs_id: 2025W26_1A_0240_2
-  mjd: 60850.0157620455
-  flux: 1221.0124310282088
-  flux_error: 37.07501182966815
-  wavelength: 2.5673209194918725
-  bandwidth: 0.07356219841638373
+- obs_id: 2025W26_1A_0240_1
+  mjd: 60850.0142698005
+  flux: 1274.5801292345993
+  flux_error: 38.20219628519606
+  wavelength: 2.5010939194048905
+  bandwidth: 0.07166457781143301
   flag: 2097152
-  pix_x: 29.96100355766641
-  pix_y: 29.894930253663055
+  pix_x: 29.357806817723095
+  pix_y: 29.583406873370222
   band: D4
-  mag_ab: 16.18319978628957
-  mag_ab_error: 0.032967463403635634
+  mag_ab: 16.136582141187993
+  mag_ab_error: 0.03254209496661589
 - obs_id: 2025W26_1A_0240_2
   mjd: 60850.0157620455
   flux: 609.424296890412
@@ -1989,6 +1977,18 @@ photometry_results:
   band: D1
   mag_ab: 16.93770058764354
   mag_ab_error: 0.07444016116246498
+- obs_id: 2025W26_1A_0240_2
+  mjd: 60850.0157620455
+  flux: 1221.0124310282088
+  flux_error: 37.07501182966815
+  wavelength: 2.5673209194918725
+  bandwidth: 0.07356219841638373
+  flag: 2097152
+  pix_x: 29.96100355766641
+  pix_y: 29.894930253663055
+  band: D4
+  mag_ab: 16.18319978628957
+  mag_ab_error: 0.032967463403635634
 - obs_id: 2025W26_1A_0240_3
   mjd: 60850.0172543025
   flux: 595.0025016291243
@@ -2015,18 +2015,6 @@ photometry_results:
   mag_ab_error: 0.03127386215583456
 - obs_id: 2025W26_1A_0240_4
   mjd: 60850.0187465595
-  flux: 1315.342383364605
-  flux_error: 38.57687578386124
-  wavelength: 2.706358859663456
-  bandwidth: 0.0775460960792358
-  flag: 2097152
-  pix_x: 29.992213484689387
-  pix_y: 29.284504560557835
-  band: D4
-  mag_ab: 16.1024029642253
-  mag_ab_error: 0.031842895990210944
-- obs_id: 2025W26_1A_0240_4
-  mjd: 60850.0187465595
   flux: 735.1916644947884
   flux_error: 42.275615759943896
   wavelength: 0.8236129302900379
@@ -2037,18 +2025,18 @@ photometry_results:
   band: D1
   mag_ab: 16.733998563917616
   mag_ab_error: 0.062432925760327135
-- obs_id: 2025W26_1A_0298_1
-  mjd: 60850.354095055
-  flux: 721.2186123544203
-  flux_error: 43.07275505722857
-  wavelength: 0.8425711296712676
-  bandwidth: 0.021549134857246702
+- obs_id: 2025W26_1A_0240_4
+  mjd: 60850.0187465595
+  flux: 1315.342383364605
+  flux_error: 38.57687578386124
+  wavelength: 2.706358859663456
+  bandwidth: 0.0775460960792358
   flag: 2097152
-  pix_x: 29.13831197111462
-  pix_y: 29.200454601854197
-  band: D1
-  mag_ab: 16.754832685120498
-  mag_ab_error: 0.0648425439987541
+  pix_x: 29.992213484689387
+  pix_y: 29.284504560557835
+  band: D4
+  mag_ab: 16.1024029642253
+  mag_ab_error: 0.031842895990210944
 - obs_id: 2025W26_1A_0298_1
   mjd: 60850.354095055
   flux: 1405.195346202885
@@ -2061,6 +2049,18 @@ photometry_results:
   band: D4
   mag_ab: 16.030658242990235
   mag_ab_error: 0.03061035680196003
+- obs_id: 2025W26_1A_0298_1
+  mjd: 60850.354095055
+  flux: 721.2186123544203
+  flux_error: 43.07275505722857
+  wavelength: 0.8425711296712676
+  bandwidth: 0.021549134857246702
+  flag: 2097152
+  pix_x: 29.13831197111462
+  pix_y: 29.200454601854197
+  band: D1
+  mag_ab: 16.754832685120498
+  mag_ab_error: 0.0648425439987541
 - obs_id: 2025W26_1A_0298_2
   mjd: 60850.355587300495
   flux: 1557.5435539586776
@@ -2111,18 +2111,6 @@ photometry_results:
   mag_ab_error: 0.02962131361662744
 - obs_id: 2025W26_1A_0553_2
   mjd: 60851.85025693
-  flux: 878.6677351277089
-  flux_error: 42.61933220422045
-  wavelength: 0.9037690962933383
-  bandwidth: 0.02311430036067504
-  flag: 2097152
-  pix_x: 29.64530717346043
-  pix_y: 29.252528981568055
-  band: D1
-  mag_ab: 16.540438301736877
-  mag_ab_error: 0.0526630831505503
-- obs_id: 2025W26_1A_0553_2
-  mjd: 60851.85025693
   flux: 1015.8373231538452
   flux_error: 30.52907404637346
   wavelength: 3.011466931364051
@@ -2133,18 +2121,18 @@ photometry_results:
   band: D4
   mag_ab: 16.38293958670814
   mag_ab_error: 0.03262975304646244
-- obs_id: 2025W26_1A_0553_3
-  mjd: 60851.851749175505
-  flux: 854.0042423388048
-  flux_error: 40.410944681820254
-  wavelength: 3.0937553276554333
-  bandwidth: 0.088646282833745
-  flag: 2097216
-  pix_x: 29.889851598231193
-  pix_y: 29.55445905706639
-  band: D4
-  mag_ab: 16.571349929777035
-  mag_ab_error: 0.05137635568339914
+- obs_id: 2025W26_1A_0553_2
+  mjd: 60851.85025693
+  flux: 878.6677351277089
+  flux_error: 42.61933220422045
+  wavelength: 0.9037690962933383
+  bandwidth: 0.02311430036067504
+  flag: 2097152
+  pix_x: 29.64530717346043
+  pix_y: 29.252528981568055
+  band: D1
+  mag_ab: 16.540438301736877
+  mag_ab_error: 0.0526630831505503
 - obs_id: 2025W26_1A_0553_3
   mjd: 60851.851749175505
   flux: 727.0037752638917
@@ -2157,6 +2145,18 @@ photometry_results:
   band: D1
   mag_ab: 16.746158334709285
   mag_ab_error: 0.06035155931171746
+- obs_id: 2025W26_1A_0553_3
+  mjd: 60851.851749175505
+  flux: 854.0042423388048
+  flux_error: 40.410944681820254
+  wavelength: 3.0937553276554333
+  bandwidth: 0.088646282833745
+  flag: 2097216
+  pix_x: 29.889851598231193
+  pix_y: 29.55445905706639
+  band: D4
+  mag_ab: 16.571349929777035
+  mag_ab_error: 0.05137635568339914
 - obs_id: 2025W26_1A_0553_4
   mjd: 60851.8532414325
   flux: 1609.8667800339788
@@ -2207,18 +2207,6 @@ photometry_results:
   mag_ab_error: 0.05085681921359559
 - obs_id: 2025W26_2A_0026_2
   mjd: 60852.5976627865
-  flux: 1218.5231359703307
-  flux_error: 45.82602262307809
-  wavelength: 0.9930242977067346
-  bandwidth: 0.025397041986283193
-  flag: 2097152
-  pix_x: 29.52727770860477
-  pix_y: 29.198764346624756
-  band: D1
-  mag_ab: 16.185415551243572
-  mag_ab_error: 0.040832193015621535
-- obs_id: 2025W26_2A_0026_2
-  mjd: 60852.5976627865
   flux: 1762.5157212521328
   flux_error: 41.42372355131315
   wavelength: 3.3537380848394225
@@ -2229,6 +2217,18 @@ photometry_results:
   band: D4
   mag_ab: 15.784667501270341
   mag_ab_error: 0.025517637007856708
+- obs_id: 2025W26_2A_0026_2
+  mjd: 60852.5976627865
+  flux: 1218.5231359703307
+  flux_error: 45.82602262307809
+  wavelength: 0.9930242977067346
+  bandwidth: 0.025397041986283193
+  flag: 2097152
+  pix_x: 29.52727770860477
+  pix_y: 29.198764346624756
+  band: D1
+  mag_ab: 16.185415551243572
+  mag_ab_error: 0.040832193015621535
 - obs_id: 2025W26_2A_0026_3
   mjd: 60852.599155032
   flux: 1649.6478735330431
@@ -2303,18 +2303,6 @@ photometry_results:
   mag_ab_error: 0.049843172786885305
 - obs_id: 2025W26_2A_0142_2
   mjd: 60853.073016548
-  flux: 1045.1965542229616
-  flux_error: 57.02571587423836
-  wavelength: 1.0905814360189205
-  bandwidth: 0.02789210949004203
-  flag: 2097152
-  pix_x: 29.968894664065665
-  pix_y: 29.9337149670193
-  band: D1
-  mag_ab: 16.352005076782994
-  mag_ab_error: 0.059237551135002384
-- obs_id: 2025W26_2A_0142_2
-  mjd: 60853.073016548
   flux: 1889.2739620684583
   flux_error: 43.48116229403183
   wavelength: 3.731407057325139
@@ -2325,6 +2313,18 @@ photometry_results:
   band: D4
   mag_ab: 15.709262652062073
   mag_ab_error: 0.024987944086154595
+- obs_id: 2025W26_2A_0142_2
+  mjd: 60853.073016548
+  flux: 1045.1965542229616
+  flux_error: 57.02571587423836
+  wavelength: 1.0905814360189205
+  bandwidth: 0.02789210949004203
+  flag: 2097152
+  pix_x: 29.968894664065665
+  pix_y: 29.9337149670193
+  band: D1
+  mag_ab: 16.352005076782994
+  mag_ab_error: 0.059237551135002384
 - obs_id: 2025W26_2A_0142_3
   mjd: 60853.0745087935
   flux: 1160.069422189173

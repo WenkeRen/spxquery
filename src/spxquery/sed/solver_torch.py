@@ -5,9 +5,10 @@ PyTorch solver for Deep Image Prior reconstruction.
 import logging
 import math
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
+import scipy.interpolate
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -106,6 +107,169 @@ def log_loss(x: torch.Tensor, epsilon: float = 1e-6) -> torch.Tensor:
     - Large |x| (|x| >> epsilon): Approx log(|x|/epsilon) -> Logarithmic growth
     """
     return torch.sum(torch.log(1 + torch.abs(x) / epsilon))
+
+
+def _generate_drizzled_spectrum(
+    data: GlobalSpectralData, config: SEDConfig
+) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, any]]:
+    """
+    Generate drizzled spectrum and per-wavelength uncertainties from GlobalSpectralData.
+
+    Uses the drizzle algorithm to combine low-resolution observations into a
+    high-resolution spectrum. The filter profile information is extracted from
+    the sparse H matrix structure. Missing wavelength bins (due to lack of
+    observation coverage or high pixfrac) are interpolated using linear interpolation.
+
+    Parameters
+    ----------
+    data : GlobalSpectralData
+        Global spectral observation data with sparse H matrix.
+    config : SEDConfig
+        Configuration containing drizzle parameters (pixfrac, oversampling_factor).
+
+    Returns
+    -------
+    drizzled_flux : torch.Tensor
+        Drizzled flux values on global wavelength grid, shape (N,).
+        Missing values have been interpolated.
+    drizzled_error : torch.Tensor
+        Per-wavelength uncertainties on global wavelength grid, shape (N,).
+        For interpolated regions, uses median of neighboring errors.
+    drizzle_info : dict
+        Dictionary with drizzle statistics:
+        - 'coverage_fraction': fraction of wavelength bins with valid data
+        - 'n_interpolated': number of NaN bins interpolated
+        - 'n_observations': number of observations used
+        - 'error_mean': mean of drizzle errors
+        - 'error_std': std of drizzle errors
+    """
+    # Extract information from sparse H matrix
+    # H_indices shape: (2, nnz) where row 0 = observation indices, row 1 = wavelength bin indices
+    # H_values shape: (nnz,) - filter transmission values
+
+    H_row_indices = data.H_indices[0].cpu().numpy()  # Observation indices
+    H_col_indices = data.H_indices[1].cpu().numpy()  # Wavelength bin indices
+    H_values = data.H_values.cpu().numpy()  # Filter transmission values
+    observations = data.observations.cpu().numpy()  # Observed fluxes
+    weights = data.weights.cpu().numpy()  # Observation weights (inverse variance)
+    wavelength_grid = data.global_wavelength_grid.cpu().numpy()  # Global wavelength grid
+
+    n_obs = data.H_shape[0]  # Number of observations
+    n_wavelength = len(wavelength_grid)  # Number of wavelength bins
+
+    # Initialize drizzle accumulators
+    numerator = np.zeros(n_wavelength)  # Flux * Weight
+    weight_map = np.zeros(n_wavelength)  # Total weight
+    count_map = np.zeros(n_wavelength, dtype=int)  # Number of contributions
+
+    # Extract unique observation indices and process each observation
+    unique_obs_indices = np.unique(H_row_indices)
+
+    for obs_idx in unique_obs_indices:
+        # Find H matrix entries for this observation
+        mask = H_row_indices == obs_idx
+        col_idx = H_col_indices[mask]  # Wavelength bins affected by this observation
+        values = H_values[mask]  # Filter transmission values
+
+        # Apply pixfrac to filter profile (shrinks effective bandwidth)
+        # The H matrix already encodes the filter shape, so we scale the transmission values
+        # to simulate pixfrac effect
+        effective_values = values * config.drizzle_pixfrac
+
+        # Get observation flux and weight
+        obs_flux = observations[obs_idx]
+        obs_weight = weights[obs_idx]
+
+        # Accumulate weighted flux
+        # Each observation contributes: flux * weight * transmission_profile
+        weighted_contribution = obs_flux * obs_weight * effective_values
+        weight_contribution = obs_weight * effective_values
+
+        # Add to accumulators
+        numerator[col_idx] += weighted_contribution
+        weight_map[col_idx] += weight_contribution
+        count_map[col_idx] += 1
+
+    # Compute drizzled spectrum and uncertainties
+    # Avoid division by zero
+    valid_mask = weight_map > 0
+
+    # Initialize with NaN
+    drizzled_flux_np = np.full(n_wavelength, np.nan)
+    drizzled_error_np = np.full(n_wavelength, np.nan)
+
+    # Compute flux and error where valid
+    drizzled_flux_np[valid_mask] = numerator[valid_mask] / weight_map[valid_mask]
+    drizzled_error_np[valid_mask] = 1.0 / np.sqrt(weight_map[valid_mask])
+
+    # Interpolate NaN values
+    n_nan = np.sum(np.isnan(drizzled_flux_np))
+    if n_nan > 0:
+        # Find valid (non-NaN) indices
+        valid_indices = np.where(~np.isnan(drizzled_flux_np))[0]
+
+        if len(valid_indices) > 1:
+            # Linear interpolation
+            interp_flux = scipy.interpolate.interp1d(
+                valid_indices,
+                drizzled_flux_np[valid_indices],
+                kind="linear",
+                bounds_error=False,
+                fill_value="extrapolate",
+            )
+            interp_error = scipy.interpolate.interp1d(
+                valid_indices,
+                drizzled_error_np[valid_indices],
+                kind="linear",
+                bounds_error=False,
+                fill_value="extrapolate",
+            )
+
+            # Fill NaN values
+            nan_indices = np.where(np.isnan(drizzled_flux_np))[0]
+            drizzled_flux_np[nan_indices] = interp_flux(nan_indices)
+            drizzled_error_np[nan_indices] = interp_error(nan_indices)
+
+            logger.info(
+                f"Drizzle: interpolated {n_nan}/{n_wavelength} ({100*n_nan/n_wavelength:.1f}%) wavelength bins"
+            )
+        else:
+            # Not enough valid data for interpolation
+            logger.warning(
+                f"Drizzle: insufficient valid data ({len(valid_indices)} bins), cannot interpolate {n_nan} NaN bins"
+            )
+            # Fill with zeros (fallback)
+            drizzled_flux_np = np.nan_to_num(drizzled_flux_np, nan=0.0)
+            # Use minimum error for fallback
+            min_error = np.nanmin(drizzled_error_np) if not np.all(np.isnan(drizzled_error_np)) else 1.0
+            drizzled_error_np = np.nan_to_num(drizzled_error_np, nan=min_error)
+
+    # Clamp errors to minimum value to avoid numerical issues
+    min_error_threshold = np.median(drizzled_error_np) * 0.01  # 1% of median error
+    drizzled_error_np = np.maximum(drizzled_error_np, min_error_threshold)
+
+    # Convert to torch tensors (keep on CPU, will move to device in SpectralModel)
+    drizzled_flux = torch.from_numpy(drizzled_flux_np).float()
+    drizzled_error = torch.from_numpy(drizzled_error_np).float()
+
+    # Compute statistics
+    coverage_fraction = np.sum(valid_mask) / n_wavelength
+    drizzle_info = {
+        "coverage_fraction": coverage_fraction,
+        "n_interpolated": n_nan,
+        "n_observations": n_obs,
+        "error_mean": float(np.mean(drizzled_error_np)),
+        "error_std": float(np.std(drizzled_error_np)),
+        "error_min": float(np.min(drizzled_error_np)),
+        "error_max": float(np.max(drizzled_error_np)),
+    }
+
+    logger.info(
+        f"Drizzle generated: {coverage_fraction:.1%} coverage, {n_nan} bins interpolated, "
+        f"error range: [{drizzle_info['error_min']:.3e}, {drizzle_info['error_max']:.3e}]"
+    )
+
+    return drizzled_flux, drizzled_error, drizzle_info
 
 
 def create_learning_rate_scheduler(optimizer, config: SEDConfig):
@@ -382,11 +546,12 @@ class SpectralModel(nn.Module):
     Wrapper for SpectralUNet that holds static noise and optional jitter.
 
     The input to the network consists of:
-    - Static noise: Fixed component with dip_noise_std
+    - Static noise: Fixed component (random noise or drizzled spectrum)
     - Optional jitter: Additional component that can decay linearly
+      (homoscedastic for random noise, heteroscedastic for drizzle input)
     """
 
-    def __init__(self, n_pixels: int, config: SEDConfig):
+    def __init__(self, n_pixels: int, config: SEDConfig, data: Optional[GlobalSpectralData] = None):
         super().__init__()
         self.net = SpectralUNet(
             in_channels=1,
@@ -398,15 +563,44 @@ class SpectralModel(nn.Module):
         self.config = config
         self.n_pixels = n_pixels
 
-        # Static noise component (fixed throughout training)
-        # Shape: (1, 1, N)
-        self.register_buffer("z_static", torch.randn(1, 1, n_pixels) * config.dip_noise_std)
+        # Drizzle mode: use drizzled spectrum as static input
+        if config.use_drizzle_input:
+            if data is None:
+                raise ValueError("data must be provided when use_drizzle_input=True")
+
+            logger.info("Using drizzled spectrum as DIP input (pixfrac={:.2f})".format(config.drizzle_pixfrac))
+
+            # Generate drizzled spectrum and per-wavelength errors
+            drizzled_flux, drizzled_error, drizzle_info = _generate_drizzled_spectrum(data, config)
+
+            # Store drizzled spectrum as static input (shape: (N,) -> (1, 1, N))
+            self.register_buffer("z_static", drizzled_flux.unsqueeze(0).unsqueeze(0))
+
+            # Store per-wavelength errors for heteroscedastic jitter (shape: (N,) -> (1, 1, N))
+            self.register_buffer("z_error_reference", drizzled_error.unsqueeze(0).unsqueeze(0))
+
+            # Store drizzle statistics for logging
+            self.drizzle_info = drizzle_info
+        else:
+            # Standard mode: use random noise as static input
+            # Shape: (1, 1, N)
+            self.register_buffer("z_static", torch.randn(1, 1, n_pixels) * config.dip_noise_std)
+
+            # No error reference for random noise mode
+            self.register_buffer("z_error_reference", None)
+
+            self.drizzle_info = None
 
         # Dynamic jitter component (will be updated during training)
         self.register_buffer("z_jitter", torch.zeros(1, 1, n_pixels))
 
-        # Current jitter standard deviation
-        self.register_buffer("current_jitter_std", torch.tensor(0.0))
+        # Current jitter standard deviation (scalar for random noise, tensor for drizzle)
+        if config.use_drizzle_input:
+            # For drizzle, use per-wavelength errors
+            self.register_buffer("current_jitter_std", torch.zeros(1, 1, n_pixels))
+        else:
+            # For random noise, use scalar jitter std
+            self.register_buffer("current_jitter_std", torch.tensor(0.0))
 
         # Initialize jitter
         self.update_jitter(0)
@@ -415,6 +609,9 @@ class SpectralModel(nn.Module):
         """
         Update the jitter component based on current epoch.
 
+        For drizzle input mode: uses per-wavelength errors (heteroscedastic jitter)
+        For random noise mode: uses dip_noise_std (homoscedastic jitter)
+
         Parameters
         ----------
         epoch : int
@@ -422,43 +619,85 @@ class SpectralModel(nn.Module):
         """
         if self.config.dip_noise_jitter_initial_ratio is None:
             # No jitter enabled
-            self.current_jitter_std = torch.tensor(0.0)
+            if self.config.use_drizzle_input:
+                self.current_jitter_std.zero_()
+            else:
+                self.current_jitter_std = torch.tensor(0.0)
             self.z_jitter.zero_()
             return
 
-        # Calculate initial jitter standard deviation
-        initial_jitter_std = self.config.dip_noise_std * self.config.dip_noise_jitter_initial_ratio
+        if self.config.use_drizzle_input:
+            # Drizzle mode: per-wavelength heteroscedastic jitter
+            # Jitter = dip_noise_jitter_initial_ratio * error (per wavelength)
 
-        if self.config.dip_noise_jitter_min_ratio is None:
-            # No decay, use constant jitter
-            self.current_jitter_std = torch.tensor(initial_jitter_std)
-        else:
-            # Linear decay from initial ratio to minimum ratio
-            if epoch < self.config.learning_rate_warmup_epochs:
-                # During warmup, use full initial jitter
-                current_jitter_std = initial_jitter_std
+            # Calculate current jitter ratio (handles decay)
+            if self.config.dip_noise_jitter_min_ratio is None:
+                # No decay, use constant ratio
+                current_ratio = self.config.dip_noise_jitter_initial_ratio
             else:
-                # Linear decay phase
-                decay_progress = (epoch - self.config.learning_rate_warmup_epochs) / (
-                    self.config.epochs - self.config.learning_rate_warmup_epochs
-                )
-                decay_progress = min(decay_progress, 1.0)  # Clamp to [0, 1]
+                # Linear decay from initial ratio to minimum ratio
+                if epoch < self.config.learning_rate_warmup_epochs:
+                    # During warmup, use full initial ratio
+                    current_ratio = self.config.dip_noise_jitter_initial_ratio
+                else:
+                    # Linear decay phase
+                    decay_progress = (epoch - self.config.learning_rate_warmup_epochs) / (
+                        self.config.epochs - self.config.learning_rate_warmup_epochs
+                    )
+                    decay_progress = min(decay_progress, 1.0)  # Clamp to [0, 1]
 
-                # Linear interpolation from initial to minimum jitter
-                current_ratio = self.config.dip_noise_jitter_min_ratio + (
-                    self.config.dip_noise_jitter_initial_ratio - self.config.dip_noise_jitter_min_ratio
-                ) * (1 - decay_progress)
-                current_jitter_std = self.config.dip_noise_std * current_ratio
+                    # Linear interpolation from initial to minimum ratio
+                    current_ratio = self.config.dip_noise_jitter_min_ratio + (
+                        self.config.dip_noise_jitter_initial_ratio - self.config.dip_noise_jitter_min_ratio
+                    ) * (1 - decay_progress)
 
-            self.current_jitter_std = torch.tensor(current_jitter_std)
+            # Per-wavelength jitter std = current_ratio * z_error_reference
+            self.current_jitter_std = current_ratio * self.z_error_reference
 
-        # Generate new jitter with current standard deviation
-        if self.current_jitter_std > 0:
-            # Generate jitter on the same device as static noise
-            device = self.z_static.device
-            self.z_jitter = torch.randn(1, 1, self.n_pixels, device=device) * self.current_jitter_std
+            # Generate heteroscedastic jitter
+            if current_ratio > 0:
+                # Generate jitter on the same device as static noise
+                device = self.z_static.device
+                # Per-wavelength noise with different std
+                self.z_jitter = torch.randn(1, 1, self.n_pixels, device=device) * self.current_jitter_std
+            else:
+                self.z_jitter.zero_()
+
         else:
-            self.z_jitter.zero_()
+            # Random noise mode: homoscedastic jitter (original behavior)
+            # Calculate initial jitter standard deviation
+            initial_jitter_std = self.config.dip_noise_std * self.config.dip_noise_jitter_initial_ratio
+
+            if self.config.dip_noise_jitter_min_ratio is None:
+                # No decay, use constant jitter
+                self.current_jitter_std = torch.tensor(initial_jitter_std)
+            else:
+                # Linear decay from initial ratio to minimum ratio
+                if epoch < self.config.learning_rate_warmup_epochs:
+                    # During warmup, use full initial jitter
+                    current_jitter_std = initial_jitter_std
+                else:
+                    # Linear decay phase
+                    decay_progress = (epoch - self.config.learning_rate_warmup_epochs) / (
+                        self.config.epochs - self.config.learning_rate_warmup_epochs
+                    )
+                    decay_progress = min(decay_progress, 1.0)  # Clamp to [0, 1]
+
+                    # Linear interpolation from initial to minimum jitter
+                    current_ratio = self.config.dip_noise_jitter_min_ratio + (
+                        self.config.dip_noise_jitter_initial_ratio - self.config.dip_noise_jitter_min_ratio
+                    ) * (1 - decay_progress)
+                    current_jitter_std = self.config.dip_noise_std * current_ratio
+
+                self.current_jitter_std = torch.tensor(current_jitter_std)
+
+            # Generate new jitter with current standard deviation
+            if self.current_jitter_std > 0:
+                # Generate jitter on the same device as static noise
+                device = self.z_static.device
+                self.z_jitter = torch.randn(1, 1, self.n_pixels, device=device) * self.current_jitter_std
+            else:
+                self.z_jitter.zero_()
 
     @property
     def z(self):
@@ -719,7 +958,8 @@ def solve_global_reconstruction(
 
     # Initialize model on main device (can be MPS)
     n_pixels = config.global_resolution
-    model = SpectralModel(n_pixels, config).to(device)
+    # Pass data to model if using drizzle input
+    model = SpectralModel(n_pixels, config, data=data if config.use_drizzle_input else None).to(device)
 
     # Initialize CWT regularization on main device
     cwt = GaussianCWT(config.cwt_scales, device=str(device)).to(device)
@@ -776,16 +1016,36 @@ def solve_global_reconstruction(
         try:
             # Log initial configuration
             config.log_to_wandb(config.to_wandb_config())
-            config.log_to_wandb(
-                {
-                    "training_started": True,
-                    "total_epochs": config.epochs,
-                    "learning_rate": config.learning_rate,
-                    "regularization_weight": config.regularization_weight,
-                }
-            )
 
-            # Save initial model state and input noise as artifacts if enabled
+            # Log training initialization metrics
+            training_metrics = {
+                "training_started": True,
+                "total_epochs": config.epochs,
+                "learning_rate": config.learning_rate,
+                "regularization_weight": config.regularization_weight,
+            }
+
+            # Add drizzle-specific metrics if enabled
+            if config.use_drizzle_input and model.drizzle_info is not None:
+                training_metrics.update(
+                    {
+                        "drizzle_enabled": True,
+                        "drizzle_pixfrac": config.drizzle_pixfrac,
+                        "drizzle_coverage_fraction": model.drizzle_info["coverage_fraction"],
+                        "drizzle_n_interpolated": model.drizzle_info["n_interpolated"],
+                        "drizzle_error_mean": model.drizzle_info["error_mean"],
+                        "drizzle_error_std": model.drizzle_info["error_std"],
+                        "drizzle_error_min": model.drizzle_info["error_min"],
+                        "drizzle_error_max": model.drizzle_info["error_max"],
+                        "drizzle_n_observations": model.drizzle_info["n_observations"],
+                    }
+                )
+            else:
+                training_metrics["drizzle_enabled"] = False
+
+            config.log_to_wandb(training_metrics)
+
+            # Save initial model state and input as artifacts if enabled
             if config.wandb_save_model_artifacts:
                 import json
 
@@ -797,16 +1057,31 @@ def solve_global_reconstruction(
                     torch.save(model.state_dict(), f)
                 config.wandb_run.log_artifact(model_artifact, aliases=["initial"])
 
-                # Save input static noise
-                noise_artifact = wandb.Artifact("input_static_noise", type="noise")
-                noise_data = {
-                    "z_static": model.z_static.detach().cpu().numpy().tolist(),
-                    "noise_std": config.dip_noise_std,
-                    "n_pixels": model.n_pixels,
-                }
-                with noise_artifact.new_file("static_noise.json", mode="w") as f:
-                    json.dump(noise_data, f)
-                config.wandb_run.log_artifact(noise_artifact)
+                # Save input (static noise or drizzled spectrum)
+                if config.use_drizzle_input:
+                    # Drizzle mode: save drizzled spectrum and errors
+                    input_artifact = wandb.Artifact("input_drizzled_spectrum", type="spectrum")
+                    input_data = {
+                        "z_static": model.z_static.detach().cpu().numpy().tolist(),
+                        "z_error_reference": model.z_error_reference.detach().cpu().numpy().tolist(),
+                        "pixfrac": config.drizzle_pixfrac,
+                        "n_pixels": model.n_pixels,
+                        "drizzle_info": model.drizzle_info,
+                    }
+                    with input_artifact.new_file("drizzled_spectrum.json", mode="w") as f:
+                        json.dump(input_data, f)
+                    config.wandb_run.log_artifact(input_artifact)
+                else:
+                    # Random noise mode: save static noise
+                    noise_artifact = wandb.Artifact("input_static_noise", type="noise")
+                    noise_data = {
+                        "z_static": model.z_static.detach().cpu().numpy().tolist(),
+                        "noise_std": config.dip_noise_std,
+                        "n_pixels": model.n_pixels,
+                    }
+                    with noise_artifact.new_file("static_noise.json", mode="w") as f:
+                        json.dump(noise_data, f)
+                    config.wandb_run.log_artifact(noise_artifact)
 
         except Exception as e:
             import warnings
