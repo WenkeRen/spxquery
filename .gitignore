@@ -214,6 +214,7 @@ logs/
 CLAUDE.md
 QWEN.md
 CONTINUE.md
+GEMINI.md
 
 # Sublime Text
 *.sublime-project
@@ -294,3 +295,6 @@ pip-delete-this-directory.txt
 
 DevMaterial
 debug
+
+benchmark/sed_benchmark_outputs/*
+example/wandb/*
