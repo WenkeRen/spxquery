@@ -10,23 +10,47 @@ import astropy.units as u
 import numpy as np
 import pandas as pd
 from astropy.coordinates import SkyCoord
+from photutils.aperture import CircularAperture, aperture_photometry
 from tqdm.auto import tqdm
 
 from ..core.config import PhotometryConfig, Source
 from ..processing.magnitudes import calculate_ab_magnitude_from_jy
 from ..processing.photometry import (
-    extract_aperture_photometry_with_background,
     process_flags_in_aperture,
     repair_variance_for_flagged_pixels,
 )
 from ..utils.spherex_mef import (
-    get_pixel_scale_at_position,
-    get_wavelength_at_position,
     read_spherex_mef,
     subtract_zodiacal_background,
 )
 
 logger = logging.getLogger(__name__)
+
+# Combined bitmasks for background quality filtering.
+# Single bitwise AND + comparison replaces 11+ separate flag-bit loops.
+# Bits: 0=TRANSIENT, 1=OVERFLOW, 2=SUR_ERROR, 6=NONFUNC, 7=DICHROIC,
+#        9=MISSING_DATA, 10=HOT, 11=COLD, 14=PHANMISS, 15=NONLINEAR,
+#        17=PERSIST, 19=OUTLIER, 21=SOURCE
+_BAD_BITS_STRICT = 0
+for _bit in (0, 1, 2, 6, 7, 9, 10, 11, 14, 15, 17, 19, 21):
+    _BAD_BITS_STRICT |= 1 << _bit
+
+_BAD_BITS_RELAXED = _BAD_BITS_STRICT & ~(1 << 21)  # exclude SOURCE flag
+
+
+def _fast_sigma_clip(data: np.ndarray, sigma: float = 3.0, maxiters: int = 3):
+    """Sigma-clipped stats using numpy directly (avoids astropy object overhead)."""
+    clipped = data.ravel()
+    for _ in range(maxiters):
+        m = np.mean(clipped)
+        s = np.std(clipped)
+        if s == 0:
+            break
+        mask = np.abs(clipped - m) <= sigma * s
+        if mask.all():
+            break
+        clipped = clipped[mask]
+    return float(np.mean(clipped)), float(np.median(clipped)), float(np.std(clipped))
 
 
 def _init_worker():
@@ -51,8 +75,9 @@ def process_single_image(
 ) -> Optional[Path]:
     """Extract aperture photometry for all catalog sources in one image.
 
-    Reads the MEF once, projects all sources via WCS, filters to those
-    in the field of view, then loops over in-FOV sources.
+    Optimized for batch processing: pre-computes shared arrays (background mask,
+    error map, pixel scale) once per image, then uses local cutouts for per-source
+    photometry instead of operating on the full image.
 
     Parameters
     ----------
@@ -100,9 +125,38 @@ def process_single_image(
         logger.error(f"Failed to load {image_path.name}: {e}")
         return None
 
-    # Batch WCS projection — project all sources at once
+    # --- Pre-compute per-image shared data ---
+    error_array = np.sqrt(mef.variance)
+    bg_mask_strict = (mef.flags & _BAD_BITS_STRICT) == 0
+    bg_mask_relaxed = (mef.flags & _BAD_BITS_RELAXED) == 0
+
+    pixel_scale_arcsec = mef.get_pixel_scale(
+        nx / 2.0, ny / 2.0, fallback=config.pixel_scale_fallback
+    )
+    pixel_area_arcsec2 = pixel_scale_arcsec**2
+
+    if config.aperture_method == "fwhm":
+        fwhm_arcsec = mef.psf_fwhm
+        fwhm_pixels = fwhm_arcsec / pixel_scale_arcsec
+        aperture_diameter = fwhm_pixels * config.fwhm_multiplier
+        final_aperture_radius = aperture_diameter / 2.0
+    else:
+        final_aperture_radius = config.aperture_diameter / 2.0
+
+    # Aperture cutout half-size
+    ri = int(np.ceil(final_aperture_radius)) + 1
+
+    # Geometric aperture area for background subtraction (matches original photutils path)
+    aperture_area = np.pi * final_aperture_radius**2
+
+    # Window background parameters
+    wh = ww = config.window_size
+
+    # Required margin from image edge
+    required_margin = max(config.aperture_diameter / 2.0, config.max_outer_radius)
+
+    # Batch WCS projection
     try:
-        required_margin = max(config.aperture_diameter / 2.0, config.max_outer_radius)
         src_coords = SkyCoord(
             ra=[s.ra for s in sources] * u.deg,
             dec=[s.dec for s in sources] * u.deg,
@@ -115,66 +169,105 @@ def process_single_image(
             & (py < ny - required_margin)
         )
         candidates = [
-            (s, float(px[i]), float(py[i])) for i, s in enumerate(sources) if in_bounds[i]
+            (i, float(px[i]), float(py[i]))
+            for i in range(len(sources)) if in_bounds[i]
         ]
     except Exception:
         candidates = []
 
-    # Compute aperture radius once per image
-    if config.aperture_method == "fwhm":
-        fwhm_arcsec = mef.psf_fwhm
-        pixel_scale_arcsec = mef.get_pixel_scale(
-            nx / 2.0, ny / 2.0, fallback=config.pixel_scale_fallback
-        )
-        fwhm_pixels = fwhm_arcsec / pixel_scale_arcsec
-        aperture_diameter = fwhm_pixels * config.fwhm_multiplier
-        final_aperture_radius = aperture_diameter / 2.0
-    else:
-        final_aperture_radius = config.aperture_diameter / 2.0
+    if not candidates:
+        return None
 
-    # Extract photometry for each in-FOV source
+    # Batch spectral WCS
+    cpx = np.array([c[1] for c in candidates])
+    cpy = np.array([c[2] for c in candidates])
+    try:
+        spectral_coords = mef.spectral_wcs.pixel_to_world(cpx, cpy)
+        wavelengths = spectral_coords[0].to(u.micron).value
+        bandwidths = spectral_coords[1].to(u.micron).value
+    except Exception:
+        wavelengths = None
+        bandwidths = None
+
+    # Per-source extraction
+    sigma = config.bg_sigma_clip_sigma
+    maxiters = config.bg_sigma_clip_maxiters
+    min_usable = config.min_usable_pixels
+
     results = []
-    for source, x, y in candidates:
+    for idx, (src_idx, x, y) in enumerate(candidates):
+        source = sources[src_idx]
         try:
-            wavelength, bandwidth = get_wavelength_at_position(mef, x, y)
+            if wavelengths is not None:
+                wavelength = float(wavelengths[idx])
+                bandwidth = float(bandwidths[idx])
+            else:
+                wavelength, bandwidth = mef.pixel_to_wavelength(x, y)
 
-            (
-                flux_sum_uJy_per_arcsec2,
-                flux_error_sum_uJy_per_arcsec2,
-                bg_level,
-                bg_error,
-                n_bg_pixels,
-            ) = extract_aperture_photometry_with_background(
-                image,
-                mef.variance,
-                mef.flags,
-                x,
-                y,
-                final_aperture_radius,
-                config.background_method,
-                config.window_size,
-                config.min_usable_pixels,
-                config.max_outer_radius,
-                config.bg_sigma_clip_sigma,
-                config.bg_sigma_clip_maxiters,
-                config.max_annulus_attempts,
-                config.annulus_expansion_step,
-                config.annulus_inner_offset,
-            )
+            ix, iy = int(round(x)), int(round(y))
 
-            if n_bg_pixels == 0:
-                continue
+            # --- Window background on local cutout ---
+            wy0 = iy - wh // 2
+            wy1 = wy0 + wh
+            wx0 = ix - ww // 2
+            wx1 = wx0 + ww
 
-            pixel_scale_arcsec = get_pixel_scale_at_position(
-                mef.spatial_wcs, x, y, config.pixel_scale_fallback
-            )
-            pixel_area_arcsec2 = pixel_scale_arcsec**2
-            flux_ujy = flux_sum_uJy_per_arcsec2 * pixel_area_arcsec2
-            flux_error_ujy = flux_error_sum_uJy_per_arcsec2 * pixel_area_arcsec2
-            flux_jy = flux_ujy / 1e6
-            flux_error_jy = flux_error_ujy / 1e6
+            img_win = image[wy0:wy1, wx0:wx1]
+            bg_qual = bg_mask_strict[wy0:wy1, wx0:wx1]
+
+            # Aperture exclusion: distance > aperture_radius + sqrt(2)/2
+            yy_w, xx_w = np.ogrid[wy0:wy1, wx0:wx1]
+            dist_sq = (xx_w - x) ** 2 + (yy_w - y) ** 2
+            excl_r = final_aperture_radius + 0.707
+            usable = bg_qual & (dist_sq > excl_r * excl_r)
+
+            bg_pixels = img_win[usable]
+            n_bg = len(bg_pixels)
+
+            if n_bg < min_usable:
+                bg_qual_relax = bg_mask_relaxed[wy0:wy1, wx0:wx1]
+                usable = bg_qual_relax & (dist_sq > excl_r * excl_r)
+                bg_pixels = img_win[usable]
+                n_bg = len(bg_pixels)
+                if n_bg < min_usable:
+                    continue
+
+            _, bg_level, bg_std = _fast_sigma_clip(bg_pixels, sigma, maxiters)
+            bg_error = bg_std / np.sqrt(n_bg)
+
+            # --- Aperture photometry on local cutout (uses photutils for exact overlap) ---
+            cutout_pad = ri + 1
+            ay0 = iy - cutout_pad
+            ay1 = iy + cutout_pad + 1
+            ax0 = ix - cutout_pad
+            ax1 = ix + cutout_pad + 1
+
+            img_cut = image[ay0:ay1, ax0:ax1]
+            err_cut = error_array[ay0:ay1, ax0:ax1]
+
+            x_c = x - ax0
+            y_c = y - ay0
+            aperture = CircularAperture((x_c, y_c), r=final_aperture_radius)
+            phot = aperture_photometry(img_cut, aperture, error=err_cut)
+
+            raw_flux = float(phot["aperture_sum"][0])
+            raw_flux_error = float(phot["aperture_sum_err"][0])
+
+            # Background subtraction using geometric area (matches original)
+            bg_total = bg_level * aperture_area
+            bg_error_total = bg_error * aperture_area
+
+            net_flux = raw_flux - bg_total
+            net_error = np.sqrt(raw_flux_error**2 + bg_error_total**2)
+
+            # Unit conversion
+            flux_ujy = net_flux * pixel_area_arcsec2
+            flux_error_ujy = net_error * pixel_area_arcsec2
 
             combined_flag = process_flags_in_aperture(mef.flags, x, y, final_aperture_radius)
+
+            flux_jy = flux_ujy / 1e6
+            flux_error_jy = flux_error_ujy / 1e6
             mag_ab, mag_ab_error = calculate_ab_magnitude_from_jy(flux_jy, flux_error_jy, wavelength)
 
             results.append({
