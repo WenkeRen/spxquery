@@ -40,9 +40,11 @@ def query_region_observations(config: BatchConfig) -> QueryResults:
 
     # Build ADQL spatial predicate
     if config.coverage_mode == "any":
+        # Image overlaps with search circle
         spatial = f"INTERSECTS(p.poly, CIRCLE('ICRS', {config.center_ra}, {config.center_dec}, {config.radius})) = 1"
     else:
-        spatial = f"CONTAINS(p.poly, CIRCLE('ICRS', {config.center_ra}, {config.center_dec}, {config.radius})) = 1"
+        # Image fully contains the search circle (circle inside image polygon)
+        spatial = f"CONTAINS(CIRCLE('ICRS', {config.center_ra}, {config.center_dec}, {config.radius}), p.poly) = 1"
 
     query = f"""
     SELECT
@@ -100,6 +102,13 @@ def query_region_observations(config: BatchConfig) -> QueryResults:
                 t_max=row["time_bounds_upper"],
             )
         )
+
+    # MJD range filter (post-query)
+    if config.mjd_range is not None:
+        mjd_min, mjd_max = config.mjd_range
+        before = len(observations)
+        observations = [obs for obs in observations if mjd_min <= obs.mjd <= mjd_max]
+        logger.info(f"MJD filter [{mjd_min:.1f}, {mjd_max:.1f}]: {before} -> {len(observations)} observations")
 
     # Size gate
     if len(observations) > config.max_images:

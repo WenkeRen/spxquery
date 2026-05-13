@@ -3,7 +3,7 @@
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import pandas as pd
 
@@ -28,6 +28,9 @@ class BatchConfig:
         ``"any"`` (INTERSECTS) or ``"full"`` (CONTAINS).
     bands : list of str or None
         Bands to query, e.g. ``["D1", "D3"]``.  ``None`` = all.
+    mjd_range : tuple of (float, float) or None
+        ``(mjd_min, mjd_max)`` to filter observations by time.
+        ``None`` = no time filter (all epochs).
     max_images : int
         Safety gate — raise if query returns more images than this.
     output_dir : Path
@@ -50,6 +53,7 @@ class BatchConfig:
     catalog_path: Path
     coverage_mode: str = "any"
     bands: Optional[List[str]] = None
+    mjd_range: Optional[Tuple[float, float]] = None
     max_images: int = 500
     output_dir: Path = field(default_factory=lambda: Path("batch_output"))
     max_download_workers: int = 4
@@ -69,6 +73,10 @@ class BatchConfig:
             raise ValueError(f"coverage_mode must be 'any' or 'full', got '{self.coverage_mode}'")
         if self.max_images <= 0:
             raise ValueError(f"max_images must be > 0, got {self.max_images}")
+        if self.mjd_range is not None:
+            mjd_min, mjd_max = self.mjd_range
+            if mjd_min >= mjd_max:
+                raise ValueError(f"mjd_range must be (min, max) with min < max, got {self.mjd_range}")
         self.catalog_path = Path(self.catalog_path)
         if not self.catalog_path.exists():
             raise FileNotFoundError(f"Catalog not found: {self.catalog_path}")
