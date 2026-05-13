@@ -167,7 +167,7 @@ class PhotometryConfig:
             raise ValueError(f"bg_sigma_clip_sigma must be > 0, got {self.bg_sigma_clip_sigma}")
         if self.bg_sigma_clip_maxiters <= 0:
             raise ValueError(f"bg_sigma_clip_maxiters must be > 0, got {self.bg_sigma_clip_maxiters}")
-        if self.zodi_scale_max <= self.zodi_scale_min:
+        if self.zodi_scale_max < self.zodi_scale_min:
             raise ValueError("zodi_scale_max must be > zodi_scale_min")
         if self.pixel_scale_fallback <= 0:
             raise ValueError(f"pixel_scale_fallback must be > 0, got {self.pixel_scale_fallback}")
