@@ -927,53 +927,42 @@ def format_flag_binary(flag_value: int, num_bits: int = 22) -> str:
     return format(flag_value, f"0{num_bits}b")
 
 
+# Pre-computed combined bitmasks for create_background_mask.
+# Single bitwise AND replaces per-flag loops (11+ iterations → 1 operation).
+_BAD_FLAG_BITS = 0
+for _bit in (0, 1, 2, 6, 7, 9, 10, 11, 14, 15, 17, 19):
+    _BAD_FLAG_BITS |= 1 << _bit
+_SOURCE_BIT = 1 << 21
+
+
 def create_background_mask(flags: np.ndarray, exclude_source: bool = True) -> np.ndarray:
     """
     Create mask for background pixels (good for zodiacal matching).
 
     Masks out pixels with problematic flags including non-functional pixels,
-    outliers, etc. By default, SOURCE-flagged pixels are kept as valid background
-    pixels for local background estimation, but this can be changed.
+    outliers, etc. By default, SOURCE-flagged pixels are also excluded.
 
     Parameters
     ----------
     flags : np.ndarray
         Flag bitmap array
     exclude_source : bool, optional
-        If True, also exclude SOURCE-flagged pixels (bit 21) from the mask.
-        If False (default), SOURCE pixels are kept for local background estimation.
+        If True (default), also exclude SOURCE-flagged pixels (bit 21).
+        If False, SOURCE pixels are kept for local background estimation.
 
     Returns
     -------
     np.ndarray
         Boolean mask (True = good background pixel)
+
+    Notes
+    -----
+    Bad flag bits: 0=TRANSIENT, 1=OVERFLOW, 2=SUR_ERROR, 6=NONFUNC, 7=DICHROIC,
+    9=MISSING_DATA, 10=HOT, 11=COLD, 14=PHANMISS, 15=NONLINEAR, 17=PERSIST,
+    19=OUTLIER, optionally 21=SOURCE.
     """
-    # Define flags that should be masked out for background estimation
-    bad_flags = {
-        "TRANSIENT": 0,  # Transient detections
-        "OVERFLOW": 1,  # Overflow pixels
-        "SUR_ERROR": 2,  # Processing errors
-        "NONFUNC": 6,  # Non-functional pixels
-        "DICHROIC": 7,  # Dichroic edge effects
-        "MISSING_DATA": 9,  # Missing data
-        "HOT": 10,  # Hot pixels
-        "COLD": 11,  # Anomalously low signal
-        "PHANMISS": 14,  # Phantom correction missing
-        "NONLINEAR": 15,  # Nonlinearity issues
-        "PERSIST": 17,  # Persistent charge
-        "OUTLIER": 19,  # Statistical outliers
-    }
-    # Optionally include SOURCE flag (bit 21)
-    if exclude_source:
-        bad_flags["SOURCE"] = 21
-
-    # Create combined mask
-    mask = np.ones(flags.shape, dtype=bool)  # Start with all good
-
-    for flag_name, bit in bad_flags.items():
-        flag_mask = (flags & (1 << bit)) != 0
-        mask &= ~flag_mask  # Remove flagged pixels
-        logger.debug(f"Masked {np.sum(flag_mask)} pixels for {flag_name}")
+    bad_bits = _BAD_FLAG_BITS | (_SOURCE_BIT if exclude_source else 0)
+    mask = (flags & bad_bits) == 0
 
     n_good = np.sum(mask)
     n_total = mask.size

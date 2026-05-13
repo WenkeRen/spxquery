@@ -20,22 +20,17 @@ from ..processing.photometry import (
     repair_variance_for_flagged_pixels,
 )
 from ..utils.spherex_mef import (
+    _BAD_FLAG_BITS,
+    _SOURCE_BIT,
     read_spherex_mef,
     subtract_zodiacal_background,
 )
 
 logger = logging.getLogger(__name__)
 
-# Combined bitmasks for background quality filtering.
-# Single bitwise AND + comparison replaces 11+ separate flag-bit loops.
-# Bits: 0=TRANSIENT, 1=OVERFLOW, 2=SUR_ERROR, 6=NONFUNC, 7=DICHROIC,
-#        9=MISSING_DATA, 10=HOT, 11=COLD, 14=PHANMISS, 15=NONLINEAR,
-#        17=PERSIST, 19=OUTLIER, 21=SOURCE
-_BAD_BITS_STRICT = 0
-for _bit in (0, 1, 2, 6, 7, 9, 10, 11, 14, 15, 17, 19, 21):
-    _BAD_BITS_STRICT |= 1 << _bit
-
-_BAD_BITS_RELAXED = _BAD_BITS_STRICT & ~(1 << 21)  # exclude SOURCE flag
+# Derived masks: strict (all bad bits including SOURCE), relaxed (exclude SOURCE)
+_BAD_BITS_STRICT = _BAD_FLAG_BITS | _SOURCE_BIT
+_BAD_BITS_RELAXED = _BAD_FLAG_BITS
 
 
 def _fast_sigma_clip(data: np.ndarray, sigma: float = 3.0, maxiters: int = 3):
@@ -152,8 +147,8 @@ def process_single_image(
     # Window background parameters
     wh = ww = config.window_size
 
-    # Required margin from image edge
-    required_margin = max(config.aperture_diameter / 2.0, config.max_outer_radius)
+    # Required margin from image edge (ceil(wh/2)+1 accounts for floor/ceil window boundaries)
+    required_margin = max(config.aperture_diameter / 2.0, config.max_outer_radius, wh // 2 + 1)
 
     # Batch WCS projection
     try:
@@ -207,10 +202,12 @@ def process_single_image(
             ix, iy = int(round(x)), int(round(y))
 
             # --- Window background on local cutout ---
-            wy0 = iy - wh // 2
-            wy1 = wy0 + wh
-            wx0 = ix - ww // 2
-            wx1 = wx0 + ww
+            # Match original estimate_window_boundary: floor/ceil gives ±1 pixel
+            # variation depending on fractional position of the source.
+            wy0 = int(np.floor(y - wh / 2.0))
+            wy1 = int(np.ceil(y + wh / 2.0))
+            wx0 = int(np.floor(x - ww / 2.0))
+            wx1 = int(np.ceil(x + ww / 2.0))
 
             img_win = image[wy0:wy1, wx0:wx1]
             bg_qual = bg_mask_strict[wy0:wy1, wx0:wx1]
