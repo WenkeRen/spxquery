@@ -106,6 +106,7 @@ class SPHERExMEF:
     obs_id: str
     detector: int
     mjd: float
+    psf_fwhm: float = 6.0
     image_unit: str = "MJy/sr"
     native_unit: str = "MJy/sr"
     _psf_zone_centers: Optional[Dict[int, Tuple[float, float]]] = None
@@ -196,17 +197,20 @@ class SPHERExMEF:
                 zone_id = int(ym.group(1))
                 yctr[zone_id] = float(val)
 
-        # Verify we got all zones
-        if len(xctr) != len(yctr):
-            logger.warning(f"Mismatch in PSF zone counts: {len(xctr)} X centers vs {len(yctr)} Y centers")
-
         # Build dictionary of zone centers
         zone_centers = {}
         for zone_id in xctr.keys():
             if zone_id in yctr:
                 zone_centers[zone_id] = (xctr[zone_id], yctr[zone_id])
 
-        logger.debug(f"Loaded {len(zone_centers)} PSF zone centers from header")
+        # Log appropriate message based on zone count
+        n_zones = len(zone_centers)
+        if n_zones == 1:
+            logger.info(f"Single-zone PSF detected (zone {list(zone_centers.keys())[0]})")
+        elif len(xctr) != len(yctr):
+            logger.warning(f"Mismatch in PSF zone counts: {len(xctr)} X centers vs {len(yctr)} Y centers")
+        else:
+            logger.debug(f"Loaded {n_zones} PSF zone centers from header")
 
         # Cache for future use
         self._psf_zone_centers = zone_centers
@@ -348,6 +352,11 @@ class SPHERExMEF:
         np.ndarray
             PSF array (101×101 or other size based on header) at the specified position
         """
+        # Handle single-zone PSF (optimized cutouts with reduced file size)
+        if self.psf.shape[0] == 1:
+            logger.debug("Single-zone PSF detected, returning zone 1 directly")
+            return self.psf[0]
+
         # Check if this is a cutout image by looking for CRPIX1A/CRPIX2A
         # These keywords give the pixel position of the cutout center on the parent image
         if "CRPIX1A" in self.header and "CRPIX2A" in self.header:
@@ -697,6 +706,12 @@ def read_spherex_mef(filepath: Path, target_unit: Optional[str] = None) -> SPHER
         t_max = image_header.get("MJD-END", 0)
         mjd = (t_min + t_max) / 2.0
 
+        # Read PSF FWHM from header (arcseconds)
+        psf_fwhm = image_header.get("PSF_FWHM", None)
+        if psf_fwhm is None:
+            psf_fwhm = 6.0
+            logger.warning(f"PSF_FWHM not found in header of {filepath.name}, using fallback {psf_fwhm} arcsec")
+
         # Apply unit conversion if requested
         native_unit = "MJy/sr"
         if target_unit is not None and target_unit.lower() not in ["mjy/sr", "mjy / sr"]:
@@ -723,6 +738,7 @@ def read_spherex_mef(filepath: Path, target_unit: Optional[str] = None) -> SPHER
             obs_id=obs_id,
             detector=detector,
             mjd=mjd,
+            psf_fwhm=psf_fwhm,
             image_unit=final_unit,
             native_unit=native_unit,
         )
