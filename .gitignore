@@ -298,3 +298,4 @@ debug
 
 benchmark/sed_benchmark_outputs/*
 example/wandb/*
+example/batch_demo/batch_output/
