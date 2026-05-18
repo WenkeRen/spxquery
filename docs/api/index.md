@@ -28,6 +28,12 @@ Shared utilities and parameter management.
 
 - {doc}`utils` - Logging, JSON I/O, parameter export/import
 
+## Batch Module
+
+Multi-source batch photometry over sky regions.
+
+- {doc}`batch` - Region-based queries, multi-source extraction, and aggregation
+
 ```{toctree}
 :maxdepth: 2
 
@@ -35,4 +41,5 @@ core
 processing
 visualization
 utils
+batch
 ```

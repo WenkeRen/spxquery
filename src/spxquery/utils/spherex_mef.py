@@ -106,6 +106,7 @@ class SPHERExMEF:
     obs_id: str
     detector: int
     mjd: float
+    psf_fwhm: float = 6.0
     image_unit: str = "MJy/sr"
     native_unit: str = "MJy/sr"
     _psf_zone_centers: Optional[Dict[int, Tuple[float, float]]] = None
@@ -196,17 +197,20 @@ class SPHERExMEF:
                 zone_id = int(ym.group(1))
                 yctr[zone_id] = float(val)
 
-        # Verify we got all zones
-        if len(xctr) != len(yctr):
-            logger.warning(f"Mismatch in PSF zone counts: {len(xctr)} X centers vs {len(yctr)} Y centers")
-
         # Build dictionary of zone centers
         zone_centers = {}
         for zone_id in xctr.keys():
             if zone_id in yctr:
                 zone_centers[zone_id] = (xctr[zone_id], yctr[zone_id])
 
-        logger.debug(f"Loaded {len(zone_centers)} PSF zone centers from header")
+        # Log appropriate message based on zone count
+        n_zones = len(zone_centers)
+        if n_zones == 1:
+            logger.info(f"Single-zone PSF detected (zone {list(zone_centers.keys())[0]})")
+        elif len(xctr) != len(yctr):
+            logger.warning(f"Mismatch in PSF zone counts: {len(xctr)} X centers vs {len(yctr)} Y centers")
+        else:
+            logger.debug(f"Loaded {n_zones} PSF zone centers from header")
 
         # Cache for future use
         self._psf_zone_centers = zone_centers
@@ -348,6 +352,11 @@ class SPHERExMEF:
         np.ndarray
             PSF array (101×101 or other size based on header) at the specified position
         """
+        # Handle single-zone PSF (optimized cutouts with reduced file size)
+        if self.psf.shape[0] == 1:
+            logger.debug("Single-zone PSF detected, returning zone 1 directly")
+            return self.psf[0]
+
         # Check if this is a cutout image by looking for CRPIX1A/CRPIX2A
         # These keywords give the pixel position of the cutout center on the parent image
         if "CRPIX1A" in self.header and "CRPIX2A" in self.header:
@@ -697,6 +706,12 @@ def read_spherex_mef(filepath: Path, target_unit: Optional[str] = None) -> SPHER
         t_max = image_header.get("MJD-END", 0)
         mjd = (t_min + t_max) / 2.0
 
+        # Read PSF FWHM from header (arcseconds)
+        psf_fwhm = image_header.get("PSF_FWHM", None)
+        if psf_fwhm is None:
+            psf_fwhm = 6.0
+            logger.warning(f"PSF_FWHM not found in header of {filepath.name}, using fallback {psf_fwhm} arcsec")
+
         # Apply unit conversion if requested
         native_unit = "MJy/sr"
         if target_unit is not None and target_unit.lower() not in ["mjy/sr", "mjy / sr"]:
@@ -723,6 +738,7 @@ def read_spherex_mef(filepath: Path, target_unit: Optional[str] = None) -> SPHER
             obs_id=obs_id,
             detector=detector,
             mjd=mjd,
+            psf_fwhm=psf_fwhm,
             image_unit=final_unit,
             native_unit=native_unit,
         )
@@ -911,53 +927,42 @@ def format_flag_binary(flag_value: int, num_bits: int = 22) -> str:
     return format(flag_value, f"0{num_bits}b")
 
 
+# Pre-computed combined bitmasks for create_background_mask.
+# Single bitwise AND replaces per-flag loops (11+ iterations → 1 operation).
+_BAD_FLAG_BITS = 0
+for _bit in (0, 1, 2, 6, 7, 9, 10, 11, 14, 15, 17, 19):
+    _BAD_FLAG_BITS |= 1 << _bit
+_SOURCE_BIT = 1 << 21
+
+
 def create_background_mask(flags: np.ndarray, exclude_source: bool = True) -> np.ndarray:
     """
     Create mask for background pixels (good for zodiacal matching).
 
     Masks out pixels with problematic flags including non-functional pixels,
-    outliers, etc. By default, SOURCE-flagged pixels are kept as valid background
-    pixels for local background estimation, but this can be changed.
+    outliers, etc. By default, SOURCE-flagged pixels are also excluded.
 
     Parameters
     ----------
     flags : np.ndarray
         Flag bitmap array
     exclude_source : bool, optional
-        If True, also exclude SOURCE-flagged pixels (bit 21) from the mask.
-        If False (default), SOURCE pixels are kept for local background estimation.
+        If True (default), also exclude SOURCE-flagged pixels (bit 21).
+        If False, SOURCE pixels are kept for local background estimation.
 
     Returns
     -------
     np.ndarray
         Boolean mask (True = good background pixel)
+
+    Notes
+    -----
+    Bad flag bits: 0=TRANSIENT, 1=OVERFLOW, 2=SUR_ERROR, 6=NONFUNC, 7=DICHROIC,
+    9=MISSING_DATA, 10=HOT, 11=COLD, 14=PHANMISS, 15=NONLINEAR, 17=PERSIST,
+    19=OUTLIER, optionally 21=SOURCE.
     """
-    # Define flags that should be masked out for background estimation
-    bad_flags = {
-        "TRANSIENT": 0,  # Transient detections
-        "OVERFLOW": 1,  # Overflow pixels
-        "SUR_ERROR": 2,  # Processing errors
-        "NONFUNC": 6,  # Non-functional pixels
-        "DICHROIC": 7,  # Dichroic edge effects
-        "MISSING_DATA": 9,  # Missing data
-        "HOT": 10,  # Hot pixels
-        "COLD": 11,  # Anomalously low signal
-        "PHANMISS": 14,  # Phantom correction missing
-        "NONLINEAR": 15,  # Nonlinearity issues
-        "PERSIST": 17,  # Persistent charge
-        "OUTLIER": 19,  # Statistical outliers
-    }
-    # Optionally include SOURCE flag (bit 21)
-    if exclude_source:
-        bad_flags["SOURCE"] = 21
-
-    # Create combined mask
-    mask = np.ones(flags.shape, dtype=bool)  # Start with all good
-
-    for flag_name, bit in bad_flags.items():
-        flag_mask = (flags & (1 << bit)) != 0
-        mask &= ~flag_mask  # Remove flagged pixels
-        logger.debug(f"Masked {np.sum(flag_mask)} pixels for {flag_name}")
+    bad_bits = _BAD_FLAG_BITS | (_SOURCE_BIT if exclude_source else 0)
+    mask = (flags & bad_bits) == 0
 
     n_good = np.sum(mask)
     n_total = mask.size

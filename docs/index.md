@@ -16,6 +16,7 @@ SPHEREx (NASA Astrophysics Medium Explorer) obtains 0.75-5 μm spectroscopy acro
 - **Image cutout support** for storage reduction (e.g., 200px cutout vs full 2040×2040 image)
 - **Parallel downloads** with progress tracking and resumable pipeline
 - **Aperture photometry** with configurable parameters and background estimation
+- **Batch photometry** for multi-source extraction over sky regions
 - **Quality control** with SNR thresholds and pixel flag filtering
 - **Publication-quality plots** with customizable visualization parameters
 
@@ -64,6 +65,7 @@ tutorials/quickstart_demo
 :caption: User Guide
 
 user_guide/pipeline
+user_guide/batch_photometry
 user_guide/parameters
 user_guide/cutouts
 user_guide/quality_control

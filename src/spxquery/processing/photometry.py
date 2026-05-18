@@ -161,14 +161,24 @@ def process_flags_in_aperture(flags: np.ndarray, x: float, y: float, radius: flo
     int
         Combined flag bitmap
     """
-    # Create coordinate grids
-    yy, xx = np.ogrid[: flags.shape[0], : flags.shape[1]]
+    # Use local cutout around (x, y) to avoid creating full-image coordinate grids
+    ix, iy = int(round(x)), int(round(y))
+    ri = int(np.ceil(radius)) + 1
+    y0 = max(0, iy - ri)
+    y1 = min(flags.shape[0], iy + ri + 1)
+    x0 = max(0, ix - ri)
+    x1 = min(flags.shape[1], ix + ri + 1)
+
+    local_flags = flags[y0:y1, x0:x1]
+
+    # Create coordinate grids relative to the local cutout
+    yy, xx = np.ogrid[y0:y1, x0:x1]
 
     # Create circular mask
     mask = (xx - x) ** 2 + (yy - y) ** 2 <= radius**2
 
     # Get flags within aperture
-    aperture_flags = flags[mask]
+    aperture_flags = local_flags[mask]
 
     # Combine with bitwise OR
     if len(aperture_flags) > 0:
@@ -371,9 +381,9 @@ def extract_source_photometry(
         # Priority: aperture_method setting > explicit aperture_radius parameter
 
         if photometry_config.aperture_method == "fwhm":
-            # FWHM-based aperture: calculate from PSF
+            # FWHM-based aperture: use PSF_FWHM from FITS header
             try:
-                fwhm_arcsec = mef.get_psf_fwhm_estimate(x, y)
+                fwhm_arcsec = mef.psf_fwhm
 
                 # Convert FWHM from arcsec to pixels
                 pixel_scale_arcsec = mef.get_pixel_scale(x, y, fallback=photometry_config.pixel_scale_fallback)
