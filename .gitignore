@@ -286,6 +286,9 @@ htmlcov/
 # Package Management
 # =============================================================================
 
+# Poetry local config
+poetry.toml
+
 # Conda
 .conda/
 
