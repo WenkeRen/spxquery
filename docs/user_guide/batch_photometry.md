@@ -221,10 +221,45 @@ batch_output/
 ├── per_image/                           # Per-image photometry CSVs
 │   ├── level2_2025W25_1B_0263_4D3_*_photometry.csv
 │   └── ...
-└── lightcurves/                         # Per-source light curves
-    ├── 39633458707826492.csv
-    ├── 39633451346821630.csv
-    └── ...
+├── lightcurves/                         # Per-source light curves
+│   ├── 39633458707826492.csv
+│   ├── 39633451346821630.csv
+│   └── ...
+└── query_summary.yaml                   # Query metadata (region, bands, observations)
+```
+
+### Query Summary YAML
+
+After `run_query()`, a `query_summary.yaml` is saved to the output directory with the query metadata:
+
+```yaml
+query_time: "2026-05-18T14:30:00"
+region:
+  center_ra: 270.0
+  center_dec: 66.6
+  radius_deg: 0.3
+  coverage_mode: full
+filters:
+  bands: [D3]
+  mjd_range: [60791.0, 60793.0]
+n_observations: 18
+band_counts: {D3: 18}
+time_span_days: 1.4
+observations:
+  - obs_id: "2025W17_4B_0277_1"
+    band: D3
+    mjd: 60791.575318
+    wavelength_um: 2.0150
+    download_url: "https://..."
+```
+
+Load it programmatically:
+
+```python
+from spxquery.batch import load_query_summary
+
+summary = load_query_summary("batch_output/")
+print(f"Found {summary['n_observations']} observations across {summary['band_counts']}")
 ```
 
 ### Per-Image CSV Columns

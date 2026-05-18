@@ -268,7 +268,7 @@ def process_single_image(
             mag_ab, mag_ab_error = calculate_ab_magnitude_from_jy(flux_jy, flux_error_jy, wavelength)
 
             results.append({
-                "target_id": source.name,
+                "target_id": str(source.name),
                 "ra": source.ra,
                 "dec": source.dec,
                 "obs_id": obs_id,

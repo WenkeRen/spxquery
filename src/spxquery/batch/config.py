@@ -104,14 +104,14 @@ def load_catalog(catalog_path: Path) -> List[Source]:
 
     Expected columns: ``targetid``, ``ra``, ``dec``.
     """
-    df = pd.read_csv(catalog_path)
+    df = pd.read_csv(catalog_path, dtype={"targetid": str})
     required = {"targetid", "ra", "dec"}
     missing = required - set(df.columns.str.lower())
     if missing:
         raise ValueError(f"Catalog missing required columns: {missing}")
 
     sources = [
-        Source(ra=row["ra"], dec=row["dec"], name=str(row["targetid"]))
+        Source(ra=row["ra"], dec=row["dec"], name=row["targetid"])
         for _, row in df.iterrows()
     ]
     logger.info(f"Loaded {len(sources)} sources from {catalog_path.name}")

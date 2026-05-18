@@ -105,6 +105,15 @@ def _bucket_per_image_photometry(
     return nonempty, len(csv_files), total_rows
 
 
+def _tid_to_filename(tid) -> str:
+    """Format target_id as integer string for filenames (no scientific notation)."""
+    s = str(tid)
+    try:
+        return f"{int(float(s)):d}"
+    except (ValueError, OverflowError):
+        return s
+
+
 def _materialize_lightcurves_from_buckets(bucket_paths: list[Path], output_dir: Path) -> int:
     """Sort one bucket at a time and write per-source light curve CSVs."""
     if not bucket_paths:
@@ -125,7 +134,7 @@ def _materialize_lightcurves_from_buckets(bucket_paths: list[Path], output_dir: 
         df.sort_values(["target_id", "mjd"], kind="mergesort", inplace=True)
 
         for target_id, group in df.groupby("target_id", sort=False):
-            output_file = output_dir / f"{target_id}.csv"
+            output_file = output_dir / f"{_tid_to_filename(target_id)}.csv"
             group.drop(columns="target_id").to_csv(output_file, index=False)
             total_sources += 1
 

@@ -5,7 +5,9 @@ import multiprocessing as mp
 from pathlib import Path
 from typing import List, Optional
 
-from ..core.config import DownloadConfig, DownloadResult, PhotometryConfig
+import yaml
+
+from ..core.config import DownloadConfig, DownloadResult, PhotometryConfig, QueryResults
 from ..core.download import parallel_download, print_download_summary
 from .aggregate import aggregate_lightcurves
 from .config import BatchConfig, load_catalog
@@ -13,6 +15,67 @@ from .extract import run_extraction
 from .query import query_region_observations
 
 logger = logging.getLogger(__name__)
+
+_QUERY_SUMMARY_FILE = "query_summary.yaml"
+
+
+def _py(obj):
+    """Convert numpy scalars to plain Python types for YAML serialization."""
+    if hasattr(obj, "item"):
+        return obj.item()
+    return obj
+
+
+def _save_query_summary(results: QueryResults, config: BatchConfig) -> Path:
+    """Serialize query results to a YAML summary file."""
+    summary = {
+        "query_time": results.query_time.isoformat(),
+        "region": {
+            "center_ra": _py(config.center_ra),
+            "center_dec": _py(config.center_dec),
+            "radius_deg": _py(config.radius),
+            "coverage_mode": config.coverage_mode,
+        },
+        "filters": {
+            "bands": config.bands,
+            "mjd_range": [float(x) for x in config.mjd_range] if config.mjd_range else None,
+        },
+        "n_observations": len(results),
+        "band_counts": {k: int(v) for k, v in results.band_counts.items()},
+        "time_span_days": float(results.time_span_days),
+        "observations": [
+            {
+                "obs_id": obs.obs_id,
+                "band": obs.band,
+                "mjd": round(float(obs.mjd), 6),
+                "wavelength_um": round(float(obs.wavelength_center), 4),
+                "download_url": obs.download_url,
+            }
+            for obs in results.observations
+        ],
+    }
+
+    path = config.output_dir / _QUERY_SUMMARY_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        yaml.dump(summary, f, default_flow_style=False, sort_keys=False)
+    logger.info(f"Saved query summary to {path}")
+    return path
+
+
+def load_query_summary(output_dir: Path) -> dict:
+    """Load a previously saved query_summary.yaml.
+
+    Parameters
+    ----------
+    output_dir : Path
+        Root batch output directory containing the YAML file.
+    """
+    path = Path(output_dir) / _QUERY_SUMMARY_FILE
+    if not path.exists():
+        raise FileNotFoundError(f"No query summary found at {path}")
+    with open(path) as f:
+        return yaml.safe_load(f)
 
 
 class BatchPipeline:
@@ -45,6 +108,7 @@ class BatchPipeline:
         """Stage 1: Query IRSA for full-frame images covering the region."""
         logger.info("Stage 1/4: Querying region observations")
         self._query_results = query_region_observations(self.config)
+        _save_query_summary(self._query_results, self.config)
         logger.info(f"Found {len(self._query_results)} observations")
         return self._query_results
 
