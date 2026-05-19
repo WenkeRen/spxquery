@@ -304,3 +304,4 @@ example/wandb/*
 example/batch_demo/batch_output/
 
 !src/spxquery/aux/*
+example/**/*.yaml
