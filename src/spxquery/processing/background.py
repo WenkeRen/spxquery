@@ -9,9 +9,37 @@ import logging
 from typing import Tuple, Union
 
 import numpy as np
-from astropy.stats import sigma_clipped_stats
 
 logger = logging.getLogger(__name__)
+
+
+def fast_sigma_clip(data: np.ndarray, sigma: float = 3.0, maxiters: int = 3):
+    """Sigma-clipped stats using numpy directly (avoids astropy object overhead).
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Input data (will be flattened internally).
+    sigma : float
+        Clipping threshold in standard deviations.
+    maxiters : int
+        Maximum clipping iterations.
+
+    Returns
+    -------
+    mean, median, std : float, float, float
+    """
+    clipped = data.ravel()
+    for _ in range(maxiters):
+        m = np.mean(clipped)
+        s = np.std(clipped)
+        if s == 0:
+            break
+        mask = np.abs(clipped - m) <= sigma * s
+        if mask.all():
+            break
+        clipped = clipped[mask]
+    return float(np.mean(clipped)), float(np.median(clipped)), float(np.std(clipped))
 
 
 def estimate_window_background(
@@ -151,7 +179,7 @@ def estimate_window_background(
         clean_mask = create_background_mask(flags_window, False)
         usable_mask = clean_mask & aperture_exclusion_mask
         n_usable = np.sum(usable_mask)
-        
+
         if n_usable < min_usable_pixels:
             logger.error(
                 f"Insufficient usable pixels in background window even with relaxed masking: "
@@ -165,9 +193,7 @@ def estimate_window_background(
     bg_variance = variance_window[usable_mask]
 
     # Calculate background statistics using sigma-clipped mean
-    bg_mean, bg_median, bg_std = sigma_clipped_stats(
-        bg_pixels, sigma=bg_sigma_clip_sigma, maxiters=bg_sigma_clip_maxiters
-    )
+    bg_mean, bg_median, bg_std = fast_sigma_clip(bg_pixels, sigma=bg_sigma_clip_sigma, maxiters=bg_sigma_clip_maxiters)
 
     # Error on the mean background
     bg_error = bg_std / np.sqrt(n_usable)
@@ -369,7 +395,7 @@ def estimate_local_background(
             clean_mask = create_background_mask(flags, False)
             usable_mask = annulus_mask & clean_mask
             n_usable = np.sum(usable_mask)
-            
+
             if n_usable >= min_usable_pixels:
                 break
 
@@ -393,9 +419,7 @@ def estimate_local_background(
     bg_variance = variance[usable_mask]
 
     # Calculate background statistics using sigma-clipped mean
-    bg_mean, bg_median, bg_std = sigma_clipped_stats(
-        bg_pixels, sigma=bg_sigma_clip_sigma, maxiters=bg_sigma_clip_maxiters
-    )
+    bg_mean, bg_median, bg_std = fast_sigma_clip(bg_pixels, sigma=bg_sigma_clip_sigma, maxiters=bg_sigma_clip_maxiters)
 
     # Error on the mean background
     bg_error = bg_std / np.sqrt(n_usable)

@@ -26,7 +26,7 @@ def download_file(
     retries: int = 3,
     retry_delay: int = 5,
     chunk_size: int = 8192,
-    user_agent: str = "SPXQuery/0.3.0",
+    user_agent: str = "SPXQuery/0.4.1",
 ) -> DownloadResult:
     """
     Download a single file with retry logic.
@@ -46,7 +46,7 @@ def download_file(
     chunk_size : int
         Download chunk size in bytes (default: 8192)
     user_agent : str
-        User agent string for HTTP requests (default: "SPXQuery/0.3.0")
+        User agent string for HTTP requests (default: "SPXQuery/0.4.1")
 
     Returns
     -------

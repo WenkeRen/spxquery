@@ -14,6 +14,7 @@ from photutils.aperture import CircularAperture, aperture_photometry
 from tqdm.auto import tqdm
 
 from ..core.config import PhotometryConfig, Source
+from ..processing.background import fast_sigma_clip
 from ..processing.magnitudes import calculate_ab_magnitude_from_jy
 from ..processing.photometry import (
     process_flags_in_aperture,
@@ -31,21 +32,6 @@ logger = logging.getLogger(__name__)
 # Derived masks: strict (all bad bits including SOURCE), relaxed (exclude SOURCE)
 _BAD_BITS_STRICT = _BAD_FLAG_BITS | _SOURCE_BIT
 _BAD_BITS_RELAXED = _BAD_FLAG_BITS
-
-
-def _fast_sigma_clip(data: np.ndarray, sigma: float = 3.0, maxiters: int = 3):
-    """Sigma-clipped stats using numpy directly (avoids astropy object overhead)."""
-    clipped = data.ravel()
-    for _ in range(maxiters):
-        m = np.mean(clipped)
-        s = np.std(clipped)
-        if s == 0:
-            break
-        mask = np.abs(clipped - m) <= sigma * s
-        if mask.all():
-            break
-        clipped = clipped[mask]
-    return float(np.mean(clipped)), float(np.median(clipped)), float(np.std(clipped))
 
 
 def _init_worker():
@@ -125,9 +111,7 @@ def process_single_image(
     bg_mask_strict = (mef.flags & _BAD_BITS_STRICT) == 0
     bg_mask_relaxed = (mef.flags & _BAD_BITS_RELAXED) == 0
 
-    pixel_scale_arcsec = mef.get_pixel_scale(
-        nx / 2.0, ny / 2.0, fallback=config.pixel_scale_fallback
-    )
+    pixel_scale_arcsec = mef.get_pixel_scale(nx / 2.0, ny / 2.0, fallback=config.pixel_scale_fallback)
     pixel_area_arcsec2 = pixel_scale_arcsec**2
 
     if config.aperture_method == "fwhm":
@@ -163,10 +147,7 @@ def process_single_image(
             & (py >= required_margin)
             & (py < ny - required_margin)
         )
-        candidates = [
-            (i, float(px[i]), float(py[i]))
-            for i in range(len(sources)) if in_bounds[i]
-        ]
+        candidates = [(i, float(px[i]), float(py[i])) for i in range(len(sources)) if in_bounds[i]]
     except Exception:
         candidates = []
 
@@ -229,7 +210,7 @@ def process_single_image(
                 if n_bg < min_usable:
                     continue
 
-            _, bg_level, bg_std = _fast_sigma_clip(bg_pixels, sigma, maxiters)
+            _, bg_level, bg_std = fast_sigma_clip(bg_pixels, sigma, maxiters)
             bg_error = bg_std / np.sqrt(n_bg)
 
             # --- Aperture photometry on local cutout (uses photutils for exact overlap) ---
@@ -267,27 +248,29 @@ def process_single_image(
             flux_error_jy = flux_error_ujy / 1e6
             mag_ab, mag_ab_error = calculate_ab_magnitude_from_jy(flux_jy, flux_error_jy, wavelength)
 
-            results.append({
-                "target_id": str(source.name),
-                "ra": source.ra,
-                "dec": source.dec,
-                "obs_id": obs_id,
-                "band": band,
-                "mjd": mjd,
-                "x": x,
-                "y": y,
-                "flux": flux_ujy,
-                "flux_error": flux_error_ujy,
-                "mag_ab": mag_ab,
-                "mag_ab_error": mag_ab_error,
-                "wavelength": wavelength,
-                "bandwidth": bandwidth,
-                "flag": combined_flag,
-                "bg_level": bg_level,
-                "bg_error": bg_error,
-                "aperture_radius": final_aperture_radius,
-                "filename": image_path.name,
-            })
+            results.append(
+                {
+                    "target_id": str(source.name),
+                    "ra": source.ra,
+                    "dec": source.dec,
+                    "obs_id": obs_id,
+                    "band": band,
+                    "mjd": mjd,
+                    "x": x,
+                    "y": y,
+                    "flux": flux_ujy,
+                    "flux_error": flux_error_ujy,
+                    "mag_ab": mag_ab,
+                    "mag_ab_error": mag_ab_error,
+                    "wavelength": wavelength,
+                    "bandwidth": bandwidth,
+                    "flag": combined_flag,
+                    "bg_level": bg_level,
+                    "bg_error": bg_error,
+                    "aperture_radius": final_aperture_radius,
+                    "filename": image_path.name,
+                }
+            )
 
         except Exception as e:
             logger.debug(f"Error processing {source.name} in {image_path.name}: {e}")
