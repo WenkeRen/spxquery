@@ -28,6 +28,12 @@ Shared utilities and parameter management.
 
 - {doc}`utils` - Logging, JSON I/O, parameter export/import
 
+## Drizzle3D Module
+
+3D spectral image drizzle for combining SPHEREx observations into data cubes.
+
+- {doc}`drizzle3d` - Configuration, spatial/spectral mapping, accumulation, and FITS I/O
+
 ## Batch Module
 
 Multi-source batch photometry over sky regions.
@@ -38,6 +44,7 @@ Multi-source batch photometry over sky regions.
 :maxdepth: 2
 
 core
+drizzle3d
 processing
 visualization
 utils

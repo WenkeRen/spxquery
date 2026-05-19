@@ -7,6 +7,7 @@ SPHEREx (NASA Astrophysics Medium Explorer) obtains 0.75-5 μm spectroscopy acro
 - Query SPHEREx data from [IRSA (NASA/IPAC Infrared Science Archive)](https://irsa.ipac.caltech.edu/Missions/spherex.html)
 - Download spectral images with optional cutouts for reduced file sizes
 - Perform aperture photometry with zodiacal background subtraction
+- Combine multiple observations into 3D spectral data cubes via Drizzle3D
 - Generate time-series light curves and visualizations
 - Apply quality control filtering for robust photometry
 
@@ -17,6 +18,7 @@ SPHEREx (NASA Astrophysics Medium Explorer) obtains 0.75-5 μm spectroscopy acro
 - **Parallel downloads** with progress tracking and resumable pipeline
 - **Aperture photometry** with configurable parameters and background estimation
 - **Batch photometry** for multi-source extraction over sky regions
+- **Drizzle3D** — combine observations into spectral data cubes with inverse-variance weighting
 - **Quality control** with SNR thresholds and pixel flag filtering
 - **Publication-quality plots** with customizable visualization parameters
 
@@ -65,6 +67,7 @@ tutorials/quickstart_demo
 :caption: User Guide
 
 user_guide/pipeline
+user_guide/drizzle3d
 user_guide/batch_photometry
 user_guide/parameters
 user_guide/cutouts
