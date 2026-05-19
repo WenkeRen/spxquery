@@ -1048,6 +1048,7 @@ def subtract_zodiacal_background(
     zodi_scale_min: float = 0.0,
     zodi_scale_max: float = 10.0,
     bg_fraction_reject_level: float = 0.5,
+    static_zodi: bool = False,
 ) -> Tuple[np.ndarray, float]:
     """
     Subtract zodiacal light background from image with amplitude scaling.
@@ -1073,6 +1074,9 @@ def subtract_zodiacal_background(
         Minimum fraction of background pixels required for zodiacal estimation.
         If the fraction of available background pixels is below this threshold,
         the function will use a fallback scale factor of 1.0. Default is 0.5.
+    static_zodi : bool, optional
+        If True, use the zodiacal model as-is (scale=1.0) without fitting.
+        Skips background masking and scaling factor estimation entirely.
 
     Returns
     -------
@@ -1081,6 +1085,12 @@ def subtract_zodiacal_background(
     scale_factor : float
         Applied scaling factor for the zodiacal model
     """
+    if static_zodi:
+        scale_factor = 1.0
+        corrected_image = image - zodi
+        logger.info("Subtracted zodiacal background (static, scale=1.0)")
+        return corrected_image, scale_factor
+
     # Create mask for background estimation
     bg_mask = create_background_mask(flags)
 

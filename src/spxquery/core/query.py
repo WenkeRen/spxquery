@@ -33,7 +33,11 @@ OBS_ID_PATTERN = re.compile(r"\?([^/]+)")
 
 
 def query_spherex_observations(
-    source: Source, bands: Optional[List[str]] = None, cutout_size: Optional[str] = None
+    source: Source,
+    bands: Optional[List[str]] = None,
+    cutout_size: Optional[str] = None,
+    mjd_range: Optional[tuple] = None,
+    max_images: int = 0,
 ) -> QueryResults:
     """
     Query SPHEREx observations for a given source position.
@@ -51,6 +55,11 @@ def query_spherex_observations(
     cutout_size : str, optional
         NOT USED IN QUERY. Kept for backward compatibility.
         Cutout parameters are appended during download phase.
+    mjd_range : tuple, optional
+        (mjd_min, mjd_max) to restrict results by observation time.
+        Filters on the midpoint MJD of each observation.
+    max_images : int, optional
+        Safety cap on the number of results. 0 = no limit (default).
 
     Returns
     -------
@@ -83,6 +92,12 @@ def query_spherex_observations(
         band_conditions = " OR ".join([f"p.energy_bandpassname = 'SPHEREx-{band}'" for band in bands])
         query += f" AND ({band_conditions})"
 
+    # Add MJD range filter if specified
+    if mjd_range is not None:
+        mjd_min, mjd_max = mjd_range
+        query += f" AND (p.time_bounds_lower + p.time_bounds_upper)/2.0 >= {mjd_min}"
+        query += f" AND (p.time_bounds_lower + p.time_bounds_upper)/2.0 <= {mjd_max}"
+
     query += " ORDER BY p.time_bounds_lower"
 
     logger.debug(f"ADQL query: {query}")
@@ -96,6 +111,13 @@ def query_spherex_observations(
         raise RuntimeError(f"TAP query failed: {job.error}")
 
     results = job.fetch_result()
+
+    if max_images > 0 and len(results) > max_images:
+        raise RuntimeError(
+            f"Query returned {len(results)} observations, "
+            f"exceeding max_images={max_images}. "
+            f"Raise max_images or narrow the search."
+        )
 
     # Process results
     observations = []
