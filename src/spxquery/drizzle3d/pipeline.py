@@ -220,6 +220,9 @@ def _read_input_fits(filepath: Path, subtract_zodi: bool, static_zodi: bool = Fa
 def _extract_wavelength_maps(spectral_wcs: WCS, shape) -> tuple:
     """Extract per-pixel (λ_c, Δλ) maps from the spectral WCS.
 
+    Uses low-level wcs_pix2world to avoid Quantity wrapping overhead
+    for millions of pixels.
+
     Parameters
     ----------
     spectral_wcs : WCS
@@ -242,10 +245,12 @@ def _extract_wavelength_maps(spectral_wcs: WCS, shape) -> tuple:
     yy_flat = yy.ravel().astype(np.float64)
 
     try:
-        result = spectral_wcs.pixel_to_world(xx_flat, yy_flat)
-        # spectral WCS returns (wavelength, bandwidth) quantities
-        lambda_c_flat = result[0].to(u.micron).value
-        delta_lambda_flat = result[1].to(u.micron).value
+        world = spectral_wcs.wcs_pix2world(xx_flat, yy_flat, 0)
+        # One-time scalar conversion from native WCS units to micrometers
+        cunit = spectral_wcs.wcs.cunit[0]
+        um_factor = cunit.to(u.micron).value if cunit is not None else 1.0
+        lambda_c_flat = world[0] * um_factor
+        delta_lambda_flat = world[1] * um_factor
     except Exception as e:
         logger.warning(f"Failed to extract wavelength maps: {e}")
         lambda_c_flat = np.full(ny * nx, np.nan)

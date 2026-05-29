@@ -65,13 +65,13 @@ def compute_spatial_mapping(
     xx_flat = xx.ravel()
     yy_flat = yy.ravel()
 
-    # Transform all input pixel centers to sky coordinates
-    sky = input_wcs.pixel_to_world(xx_flat, yy_flat)
-    ra_flat = sky.ra.deg
-    dec_flat = sky.dec.deg
+    # Transform pixel → world using low-level wcslib API (avoids SkyCoord/Quantity overhead)
+    world = input_wcs.wcs_pix2world(xx_flat, yy_flat, 0)
+    ra_flat = world[0]
+    dec_flat = world[1]
 
     # Project onto the output tangent plane
-    out_xf, out_yf = output_wcs.world_to_pixel_values(ra_flat, dec_flat)
+    out_xf, out_yf = output_wcs.wcs_world2pix(ra_flat, dec_flat, 0)
 
     # Validity mask: pixels that land inside the output grid (with margin)
     margin = 2.0
