@@ -248,7 +248,7 @@ def _extract_wavelength_maps(spectral_wcs: WCS, shape) -> tuple:
         world = spectral_wcs.wcs_pix2world(xx_flat, yy_flat, 0)
         # One-time scalar conversion from native WCS units to micrometers
         cunit = spectral_wcs.wcs.cunit[0]
-        um_factor = cunit.to(u.micron).value if cunit is not None else 1.0
+        um_factor = cunit.to(u.micron) if cunit is not None else 1.0
         lambda_c_flat = world[0] * um_factor
         delta_lambda_flat = world[1] * um_factor
     except Exception as e:

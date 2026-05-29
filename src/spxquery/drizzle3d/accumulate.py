@@ -273,11 +273,23 @@ def drizzle_image(
     n_voxels = len(z_flat)
     logger.debug(f"Accumulating {n_contrib} spatial × {n_z} spectral → {n_voxels} voxel updates")
 
-    # --- Accumulate into cube using unbuffered numpy operations ---
-    np.add.at(cube.flux_weighted, (z_flat, y_flat, x_flat), wxf_flat * flux_flat)
-    np.add.at(cube.weight_total, (z_flat, y_flat, x_flat), wxf_flat)
-    np.add.at(cube.var_accum, (z_flat, y_flat, x_flat), wxf_flat**2 * var_flat_out)
-    np.add.at(cube.count_map, (z_flat, y_flat, x_flat), 1)
+    # --- Accumulate into cube ---
+    # Use np.bincount for float accumulations (5-10x faster than np.add.at
+    # because bincount uses a single C-level histogram pass, while add.at
+    # iterates element-by-element with Python-level index unpacking).
+    ny_out = cube.ny
+    nx_out = cube.nx
+    flat_size = n_z * ny_out * nx_out
+
+    # Flatten 3D indices to 1D for bincount
+    flat_idx = z_flat.astype(np.int64) * (ny_out * nx_out) + y_flat.astype(np.int64) * nx_out + x_flat.astype(np.int64)
+
+    cube.flux_weighted.ravel()[:] += np.bincount(flat_idx, weights=wxf_flat * flux_flat, minlength=flat_size)
+    cube.weight_total.ravel()[:] += np.bincount(flat_idx, weights=wxf_flat, minlength=flat_size)
+    cube.var_accum.ravel()[:] += np.bincount(flat_idx, weights=wxf_flat**2 * var_flat_out, minlength=flat_size)
+    cube.count_map.ravel()[:] += np.bincount(flat_idx, minlength=flat_size).astype(np.uint16)
+
+    # Bitwise accumulations still use add.at (bincount has no bitwise mode)
     np.bitwise_and.at(cube.and_mask, (z_flat, y_flat, x_flat), flag_flat)
     np.bitwise_or.at(cube.or_mask, (z_flat, y_flat, x_flat), flag_flat)
 
