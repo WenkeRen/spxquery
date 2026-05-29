@@ -16,8 +16,6 @@ from astropy.wcs import WCS
 
 from .accumulate import (
     DrizzleCube,
-    VoxelContributions,
-    _accumulate_voxels,
     _compute_voxel_contributions,
     drizzle_image,
 )
@@ -63,11 +61,11 @@ def _init_drizzle_worker(
 
 
 def _worker_compute(fpath: Path) -> Optional[str]:
-    """Worker: read one FITS file and compute voxel contributions.
+    """Worker: read one FITS file, compute and pre-bin voxel contributions.
 
-    Writes contributions to a temp .npz file and returns the file path.
-    This avoids sending ~120MB of numpy arrays through the multiprocessing
-    pipe, which serializes and stalls workers.
+    Does the full compute + bincount in the worker process so the main
+    process only needs fast array addition (no bincount). Writes pre-binned
+    arrays to a temp .npz and returns the path (tiny IPC).
     """
     import tempfile
 
@@ -119,17 +117,37 @@ def _worker_compute(fpath: Path) -> Optional[str]:
     if contrib is None:
         return None
 
-    # Write to temp file; return path (tiny IPC) instead of ~120MB arrays
+    # Pre-bin into cube-shaped arrays (the expensive bincount runs in worker)
+    ny_out, nx_out = _worker_output_shape
+    n_z = _worker_zgrid.n_z
+    flat_size = n_z * ny_out * nx_out
+
+    flat_idx = (
+        contrib.z_flat.astype(np.int64) * (ny_out * nx_out)
+        + contrib.y_flat.astype(np.int64) * nx_out
+        + contrib.x_flat.astype(np.int64)
+    )
+
+    flux_acc = np.bincount(flat_idx, weights=contrib.wxf_flat * contrib.flux_flat, minlength=flat_size)
+    weight_acc = np.bincount(flat_idx, weights=contrib.wxf_flat, minlength=flat_size)
+    var_acc = np.bincount(flat_idx, weights=contrib.wxf_flat**2 * contrib.var_flat, minlength=flat_size)
+    count_acc = np.bincount(flat_idx, minlength=flat_size)
+
+    # Bitwise masks per worker: AND from all-ones, OR from zero
+    and_mask = np.full(flat_size, 0xFFFFFFFF, dtype=np.uint32)
+    np.bitwise_and.at(and_mask, flat_idx, contrib.flag_flat)
+    or_mask = np.zeros(flat_size, dtype=np.uint32)
+    np.bitwise_or.at(or_mask, flat_idx, contrib.flag_flat)
+
     tmp = tempfile.NamedTemporaryFile(suffix=".npz", delete=False, dir=_worker_config.output_dir)
     np.savez(
         tmp.name,
-        z=contrib.z_flat,
-        y=contrib.y_flat,
-        x=contrib.x_flat,
-        wxf=contrib.wxf_flat,
-        flux=contrib.flux_flat,
-        var=contrib.var_flat,
-        flag=contrib.flag_flat,
+        flux=flux_acc,
+        weight=weight_acc,
+        var=var_acc,
+        count=count_acc,
+        and_mask=and_mask,
+        or_mask=or_mask,
     )
     tmp.close()
     return tmp.name
@@ -236,16 +254,14 @@ def drizzle_detector(
                     n_rejected += 1
                 else:
                     data = np.load(tmp_path)
-                    contrib = VoxelContributions(
-                        z_flat=data["z"],
-                        y_flat=data["y"],
-                        x_flat=data["x"],
-                        wxf_flat=data["wxf"],
-                        flux_flat=data["flux"],
-                        var_flat=data["var"],
-                        flag_flat=data["flag"],
-                    )
-                    _accumulate_voxels(cube, contrib)
+                    # Fast array addition (no bincount — that was done in worker)
+                    cube.flux_weighted.ravel()[:] += data["flux"]
+                    cube.weight_total.ravel()[:] += data["weight"]
+                    cube.var_accum.ravel()[:] += data["var"]
+                    cube.count_map.ravel()[:] += data["count"].astype(np.uint16)
+                    # Bitwise merge: AND mask from all-ones identity, OR from zero identity
+                    cube.and_mask.ravel()[:] &= data["and_mask"]
+                    cube.or_mask.ravel()[:] |= data["or_mask"]
                     cube.n_inputs += 1
                     os.unlink(tmp_path)
             pbar.close()
