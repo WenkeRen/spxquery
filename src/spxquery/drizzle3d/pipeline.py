@@ -62,12 +62,15 @@ def _init_drizzle_worker(
     _worker_exclude_bits = exclude_bits
 
 
-def _worker_compute(fpath: Path) -> Optional[VoxelContributions]:
+def _worker_compute(fpath: Path) -> Optional[str]:
     """Worker: read one FITS file and compute voxel contributions.
 
-    Returns VoxelContributions for accumulation by the main process,
-    or None if the file should be skipped.
+    Writes contributions to a temp .npz file and returns the file path.
+    This avoids sending ~120MB of numpy arrays through the multiprocessing
+    pipe, which serializes and stalls workers.
     """
+    import tempfile
+
     try:
         img_data, var_data, flag_data, _, spatial_wcs, spectral_wcs = _read_input_fits(
             fpath, _worker_config.subtract_zodi, static_zodi=_worker_config.static_zodi
@@ -95,7 +98,7 @@ def _worker_compute(fpath: Path) -> Optional[VoxelContributions]:
     if _worker_exclude_bits != 0:
         exclude_mask = (flag_data & _worker_exclude_bits) != 0
 
-    return _compute_voxel_contributions(
+    contrib = _compute_voxel_contributions(
         image=img_data,
         variance=var_data,
         flags=flag_data,
@@ -112,6 +115,24 @@ def _worker_compute(fpath: Path) -> Optional[VoxelContributions]:
         n_z=_worker_zgrid.n_z,
         exclude_mask=exclude_mask,
     )
+
+    if contrib is None:
+        return None
+
+    # Write to temp file; return path (tiny IPC) instead of ~120MB arrays
+    tmp = tempfile.NamedTemporaryFile(suffix=".npz", delete=False, dir=_worker_config.output_dir)
+    np.savez(
+        tmp.name,
+        z=contrib.z_flat,
+        y=contrib.y_flat,
+        x=contrib.x_flat,
+        wxf=contrib.wxf_flat,
+        flux=contrib.flux_flat,
+        var=contrib.var_flat,
+        flag=contrib.flag_flat,
+    )
+    tmp.close()
+    return tmp.name
 
 
 def drizzle_detector(
@@ -201,17 +222,33 @@ def drizzle_detector(
         n_workers = min(config.drizzle_workers, len(fits_paths))
         logger.info(f"D{detector}: parallel drizzle with {n_workers} workers")
 
+        from tqdm import tqdm
+
         with mp.Pool(
             processes=n_workers,
             initializer=_init_drizzle_worker,
             initargs=(config, output_wcs, output_shape, zgrid, exclude_bits),
         ) as pool:
-            for result in pool.imap(_worker_compute, fits_paths, chunksize=1):
-                if result is None:
+            pbar = tqdm(fits_paths, desc=f"D{detector} ({n_workers}w)", unit="file")
+            for tmp_path in pool.imap_unordered(_worker_compute, fits_paths, chunksize=1):
+                pbar.update(1)
+                if tmp_path is None:
                     n_rejected += 1
                 else:
-                    _accumulate_voxels(cube, result)
+                    data = np.load(tmp_path)
+                    contrib = VoxelContributions(
+                        z_flat=data["z"],
+                        y_flat=data["y"],
+                        x_flat=data["x"],
+                        wxf_flat=data["wxf"],
+                        flux_flat=data["flux"],
+                        var_flat=data["var"],
+                        flag_flat=data["flag"],
+                    )
+                    _accumulate_voxels(cube, contrib)
                     cube.n_inputs += 1
+                    os.unlink(tmp_path)
+            pbar.close()
 
     cube.n_rejected = n_rejected
     cube.finalize_masks()
