@@ -68,6 +68,7 @@ class Drizzle3DConfig:
     # ── Accumulation ───────────────────────────────────────────────────────
     ivar_max: float = 1e10  # Inverse-variance cap
     min_overlap: float = 0.0  # Minimum f_xy × f_z to accumulate
+    drizzle_workers: int = 1  # Parallel drizzle workers; 1 = serial (backward compatible)
 
     # ── Output ─────────────────────────────────────────────────────────────
     output_dir: Path = Path("drizzle_output")

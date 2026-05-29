@@ -2,24 +2,116 @@
 High-level Drizzle3D pipeline.
 
 Orchestrates: query → download → per-detector drizzle → save.
+Supports parallel preprocessing via multiprocessing when drizzle_workers > 1.
 """
 
 import logging
+import multiprocessing as mp
+import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from astropy.wcs import WCS
 
-from .accumulate import DrizzleCube, drizzle_image
+from .accumulate import (
+    DrizzleCube,
+    VoxelContributions,
+    _accumulate_voxels,
+    _compute_voxel_contributions,
+    drizzle_image,
+)
 from .config import Drizzle3DConfig
 from .grid import build_output_wcs
 from .io import save_cube
 from .query import download_observations, query_observations
 from .spatial import compute_spatial_mapping
-from .spectral import build_z_grid
+from .spectral import ZGrid, build_z_grid
 
 logger = logging.getLogger(__name__)
+
+# ── Worker process state (set by _init_drizzle_worker) ────────────────────
+_worker_config: Optional[Drizzle3DConfig] = None
+_worker_output_wcs: Optional[WCS] = None
+_worker_output_shape: Optional[Tuple[int, int]] = None
+_worker_zgrid: Optional[ZGrid] = None
+_worker_exclude_bits: int = 0
+
+
+def _init_drizzle_worker(
+    config: Drizzle3DConfig,
+    output_wcs: WCS,
+    output_shape: Tuple[int, int],
+    zgrid: ZGrid,
+    exclude_bits: int,
+) -> None:
+    """Initialize a worker process: limit threads and store shared read-only state."""
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+    # Suppress noisy per-file logging in workers
+    for name in ("spxquery", "spxquery.drizzle3d", "spxquery.utils"):
+        logging.getLogger(name).setLevel(logging.CRITICAL)
+
+    global _worker_config, _worker_output_wcs, _worker_output_shape, _worker_zgrid, _worker_exclude_bits
+    _worker_config = config
+    _worker_output_wcs = output_wcs
+    _worker_output_shape = output_shape
+    _worker_zgrid = zgrid
+    _worker_exclude_bits = exclude_bits
+
+
+def _worker_compute(fpath: Path) -> Optional[VoxelContributions]:
+    """Worker: read one FITS file and compute voxel contributions.
+
+    Returns VoxelContributions for accumulation by the main process,
+    or None if the file should be skipped.
+    """
+    try:
+        img_data, var_data, flag_data, _, spatial_wcs, spectral_wcs = _read_input_fits(
+            fpath, _worker_config.subtract_zodi, static_zodi=_worker_config.static_zodi
+        )
+    except Exception:
+        return None
+
+    if spatial_wcs is None:
+        return None
+
+    _, pix_idx, out_y, out_x, f_xy = compute_spatial_mapping(
+        spatial_wcs,
+        img_data.shape,
+        _worker_output_wcs,
+        _worker_output_shape,
+        _worker_config.xy_shrink,
+    )
+
+    if len(out_y) == 0:
+        return None
+
+    lambda_c_map, delta_lambda_map = _extract_wavelength_maps(spectral_wcs, img_data.shape)
+
+    exclude_mask = None
+    if _worker_exclude_bits != 0:
+        exclude_mask = (flag_data & _worker_exclude_bits) != 0
+
+    return _compute_voxel_contributions(
+        image=img_data,
+        variance=var_data,
+        flags=flag_data,
+        lambda_c_map=lambda_c_map,
+        delta_lambda_map=delta_lambda_map,
+        pixel_idx=pix_idx,
+        out_y=out_y,
+        out_x=out_x,
+        f_xy=f_xy,
+        z_shrink=_worker_config.effective_z_shrink(),
+        ivar_max=_worker_config.ivar_max,
+        min_overlap=_worker_config.min_overlap,
+        z_edges=_worker_zgrid.edges,
+        n_z=_worker_zgrid.n_z,
+        exclude_mask=exclude_mask,
+    )
 
 
 def drizzle_detector(
@@ -29,6 +121,9 @@ def drizzle_detector(
     output_wcs: WCS,
 ) -> Optional[Path]:
     """Run the drizzle pipeline for one detector.
+
+    When config.drizzle_workers > 1, file preprocessing runs in parallel
+    across worker processes; accumulation into the shared cube is serial.
 
     Parameters
     ----------
@@ -46,77 +141,81 @@ def drizzle_detector(
     Path or None
         Path to the output FITS file, or None if no valid inputs.
     """
-    # Build Z grid
     zgrid = build_z_grid(detector, config.z_oversample, config.z_lambda_edges)
     pixscale = config.effective_pixscale()
-
-    # Allocate accumulation cube
     cube = DrizzleCube.create(output_wcs, pixscale, zgrid, config, detector)
     output_shape = (config.output_ny(), config.output_nx())
 
-    # Build exclude mask from config.exclude_flags
     from ..utils.helpers import create_flag_mask
 
     exclude_bits = create_flag_mask(config.exclude_flags)
-
     n_rejected = 0
 
-    for fpath in fits_paths:
-        try:
-            img_data, var_data, flag_data, zodi_data, spatial_wcs, spectral_wcs = _read_input_fits(
-                fpath, config.subtract_zodi, static_zodi=config.static_zodi
+    if config.drizzle_workers <= 1:
+        # ── Serial path (backward compatible) ────────────────────────────
+        for fpath in fits_paths:
+            try:
+                img_data, var_data, flag_data, _, spatial_wcs, spectral_wcs = _read_input_fits(
+                    fpath, config.subtract_zodi, static_zodi=config.static_zodi
+                )
+            except Exception as e:
+                logger.warning(f"Skipping {fpath.name}: {e}")
+                n_rejected += 1
+                continue
+
+            if spatial_wcs is None:
+                logger.warning(f"Skipping {fpath.name}: no spatial WCS")
+                n_rejected += 1
+                continue
+
+            _, pix_idx, out_y, out_x, f_xy = compute_spatial_mapping(
+                spatial_wcs, img_data.shape, output_wcs, output_shape, config.xy_shrink,
             )
-        except Exception as e:
-            logger.warning(f"Skipping {fpath.name}: {e}")
-            n_rejected += 1
-            continue
 
-        if spatial_wcs is None:
-            logger.warning(f"Skipping {fpath.name}: no spatial WCS")
-            n_rejected += 1
-            continue
+            if len(out_y) == 0:
+                logger.debug(f"Skipping {fpath.name}: no spatial overlap")
+                n_rejected += 1
+                continue
 
-        # Compute spatial mapping
-        valid_mask, pix_idx, out_y, out_x, f_xy = compute_spatial_mapping(
-            spatial_wcs,
-            img_data.shape,
-            output_wcs,
-            output_shape,
-            config.xy_shrink,
-        )
+            lambda_c_map, delta_lambda_map = _extract_wavelength_maps(spectral_wcs, img_data.shape)
 
-        if len(out_y) == 0:
-            logger.debug(f"Skipping {fpath.name}: no spatial overlap")
-            n_rejected += 1
-            continue
+            exclude_mask = None
+            if exclude_bits != 0:
+                exclude_mask = (flag_data & exclude_bits) != 0
 
-        # Get per-pixel wavelength from spectral WCS
-        lambda_c_map, delta_lambda_map = _extract_wavelength_maps(spectral_wcs, img_data.shape)
+            drizzle_image(
+                cube=cube,
+                image=img_data,
+                variance=var_data,
+                flags=flag_data,
+                lambda_c_map=lambda_c_map,
+                delta_lambda_map=delta_lambda_map,
+                pixel_idx=pix_idx,
+                out_y=out_y,
+                out_x=out_x,
+                f_xy=f_xy,
+                exclude_mask=exclude_mask,
+            )
+    else:
+        # ── Parallel path ────────────────────────────────────────────────
+        n_workers = min(config.drizzle_workers, len(fits_paths))
+        logger.info(f"D{detector}: parallel drizzle with {n_workers} workers")
 
-        # Build pixel exclusion mask from flags
-        exclude_mask = None
-        if exclude_bits != 0:
-            exclude_mask = (flag_data & exclude_bits) != 0
-
-        # Accumulate
-        drizzle_image(
-            cube=cube,
-            image=img_data,
-            variance=var_data,
-            flags=flag_data,
-            lambda_c_map=lambda_c_map,
-            delta_lambda_map=delta_lambda_map,
-            pixel_idx=pix_idx,
-            out_y=out_y,
-            out_x=out_x,
-            f_xy=f_xy,
-            exclude_mask=exclude_mask,
-        )
+        with mp.Pool(
+            processes=n_workers,
+            initializer=_init_drizzle_worker,
+            initargs=(config, output_wcs, output_shape, zgrid, exclude_bits),
+        ) as pool:
+            for result in pool.imap(_worker_compute, fits_paths, chunksize=1):
+                if result is None:
+                    n_rejected += 1
+                else:
+                    _accumulate_voxels(cube, result)
+                    cube.n_inputs += 1
 
     cube.n_rejected = n_rejected
     cube.finalize_masks()
 
-    # Save
     output_path = Path(config.output_dir) / f"drizzle_D{detector}.fits"
     save_cube(cube, output_path, overwrite=config.overwrite)
     return output_path
