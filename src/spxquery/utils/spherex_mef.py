@@ -884,6 +884,10 @@ def get_flag_info(flag_value: int) -> Dict[str, bool]:
         Dictionary of flag names and their states
     """
     # Flag definitions from SPHEREx
+    # Level 0 (on-board): bits 0, 1, 2
+    # Static: bits 6, 7
+    # Level 1 (per-image): bits 9, 10, 11, 12, 14
+    # Level 2 (pipeline): bits 15, 17, 19, 21, 22, 24, 26, 27, 28, 29
     flags = {
         "TRANSIENT": 0,
         "OVERFLOW": 1,
@@ -899,6 +903,12 @@ def get_flag_info(flag_value: int) -> Dict[str, bool]:
         "PERSIST": 17,
         "OUTLIER": 19,
         "SOURCE": 21,
+        "GHOST": 22,
+        "GHOST_EXT": 24,
+        "BLOOM": 26,
+        "SNOWBALL": 27,
+        "HALO": 28,
+        "SATELLITE_HALO": 29,
     }
 
     flag_states = {}
@@ -929,8 +939,10 @@ def format_flag_binary(flag_value: int, num_bits: int = 22) -> str:
 
 # Pre-computed combined bitmasks for create_background_mask.
 # Single bitwise AND replaces per-flag loops (11+ iterations → 1 operation).
+# Includes all quality-compromised flags; excludes SOURCE (21) and FULLSAMPLE (12,
+# purely informational metadata about sampling completeness, not a pixel defect).
 _BAD_FLAG_BITS = 0
-for _bit in (0, 1, 2, 6, 7, 9, 10, 11, 14, 15, 17, 19):
+for _bit in (0, 1, 2, 6, 7, 9, 10, 11, 14, 15, 17, 19, 22, 24, 26, 27, 28, 29):
     _BAD_FLAG_BITS |= 1 << _bit
 _SOURCE_BIT = 1 << 21
 
@@ -959,7 +971,8 @@ def create_background_mask(flags: np.ndarray, exclude_source: bool = True) -> np
     -----
     Bad flag bits: 0=TRANSIENT, 1=OVERFLOW, 2=SUR_ERROR, 6=NONFUNC, 7=DICHROIC,
     9=MISSING_DATA, 10=HOT, 11=COLD, 14=PHANMISS, 15=NONLINEAR, 17=PERSIST,
-    19=OUTLIER, optionally 21=SOURCE.
+    19=OUTLIER, 22=GHOST, 24=GHOST_EXT, 26=BLOOM, 27=SNOWBALL, 28=HALO,
+    29=SATELLITE_HALO, optionally 21=SOURCE.
     """
     bad_bits = _BAD_FLAG_BITS | (_SOURCE_BIT if exclude_source else 0)
     mask = (flags & bad_bits) == 0
