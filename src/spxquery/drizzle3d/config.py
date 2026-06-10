@@ -60,6 +60,7 @@ class Drizzle3DConfig:
     # ── Pre-drizzle processing ─────────────────────────────────────────────
     subtract_zodi: bool = True  # Subtract ZODI extension before drizzling
     static_zodi: bool = False  # True = use zodi model as-is (scale=1.0), skip fitting
+    zodi_bg_fraction_min: float = 0.5  # Min background-pixel fraction for zodi fitting; fallback to scale=1.0 if below
     exclude_flags: List[int] = field(default_factory=list)
     # Flag bit positions: pixels with ANY of these flags are excluded.
     # Default: empty (no exclusion).
@@ -69,6 +70,7 @@ class Drizzle3DConfig:
     ivar_max: float = 1e10  # Inverse-variance cap
     min_overlap: float = 0.0  # Minimum f_xy × f_z to accumulate
     drizzle_workers: int = 1  # Parallel drizzle workers; 1 = serial (backward compatible)
+    max_pending_tmp: Optional[int] = None  # Max unconsumed temp .npz files; None = 2 × workers
 
     # ── Output ─────────────────────────────────────────────────────────────
     output_dir: Path = Path("drizzle_output")
@@ -100,6 +102,8 @@ class Drizzle3DConfig:
             raise ValueError(f"min_overlap must be in [0, 1), got {self.min_overlap}")
         if self.ivar_max <= 0:
             raise ValueError(f"ivar_max must be > 0, got {self.ivar_max}")
+        if self.max_pending_tmp is not None and self.max_pending_tmp <= 0:
+            raise ValueError(f"max_pending_tmp must be > 0, got {self.max_pending_tmp}")
 
     def effective_pixscale(self) -> float:
         """Output pixel scale [arcsec] after oversampling."""

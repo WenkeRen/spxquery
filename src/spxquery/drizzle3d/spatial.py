@@ -65,12 +65,13 @@ def compute_spatial_mapping(
     xx_flat = xx.ravel()
     yy_flat = yy.ravel()
 
-    # Transform pixel → world using low-level wcslib API (avoids SkyCoord/Quantity overhead)
-    world = input_wcs.wcs_pix2world(xx_flat, yy_flat, 0)
+    # Transform pixel → world using all_pix2world (includes SIP distortion correction).
+    # wcs_pix2world skips SIP, causing systematic positional errors for TAN-SIP headers.
+    world = input_wcs.all_pix2world(xx_flat, yy_flat, 0)
     ra_flat = world[0]
     dec_flat = world[1]
 
-    # Project onto the output tangent plane
+    # Project onto the output tangent plane (output WCS is plain TAN, no SIP, so both APIs agree)
     out_xf, out_yf = output_wcs.wcs_world2pix(ra_flat, dec_flat, 0)
 
     # Validity mask: pixels that land inside the output grid (with margin)

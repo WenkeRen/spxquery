@@ -3,6 +3,7 @@ Helper utility functions for SPXQuery package.
 """
 
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -141,6 +142,41 @@ def get_file_list(directory: Path, pattern: str = "*.fits") -> list[Path]:
 
     files = sorted(directory.rglob(pattern))
     return files
+
+
+def evict_file_pages(filepath: Path, sync: bool = False) -> None:
+    """Hint the kernel to drop this file from the page cache.
+
+    Parameters
+    ----------
+    filepath : Path
+        File whose cached pages should be dropped.
+    sync : bool
+        Flush dirty pages first. Use for freshly written outputs that will not
+        be reread soon.
+    """
+    if not hasattr(os, "posix_fadvise") or not hasattr(os, "POSIX_FADV_DONTNEED"):
+        return
+
+    path = Path(filepath)
+    flags = os.O_RDWR if sync else os.O_RDONLY
+
+    try:
+        fd = os.open(str(path), flags)
+    except OSError:
+        return
+
+    try:
+        if sync:
+            try:
+                os.fsync(fd)
+            except OSError:
+                pass
+        os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
 
 
 # Cutout-related helper functions

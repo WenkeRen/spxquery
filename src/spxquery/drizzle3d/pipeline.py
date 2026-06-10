@@ -8,8 +8,9 @@ Supports parallel preprocessing via multiprocessing when drizzle_workers > 1.
 import logging
 import multiprocessing as mp
 import os
+import queue
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, Iterator, List, Optional, Tuple
 
 import numpy as np
 from astropy.wcs import WCS
@@ -25,6 +26,7 @@ from .io import save_cube
 from .query import download_observations, query_observations
 from .spatial import compute_spatial_mapping
 from .spectral import ZGrid, build_z_grid
+from ..utils.helpers import evict_file_pages
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +73,8 @@ def _worker_compute(fpath: Path) -> Optional[str]:
 
     try:
         img_data, var_data, flag_data, _, spatial_wcs, spectral_wcs = _read_input_fits(
-            fpath, _worker_config.subtract_zodi, static_zodi=_worker_config.static_zodi
+            fpath, _worker_config.subtract_zodi, static_zodi=_worker_config.static_zodi,
+            bg_fraction_reject_level=_worker_config.zodi_bg_fraction_min,
         )
     except Exception:
         return None
@@ -150,7 +153,70 @@ def _worker_compute(fpath: Path) -> Optional[str]:
         or_mask=or_mask,
     )
     tmp.close()
+
+    # Release ALL large arrays first — this drops references to spatial_wcs /
+    # spectral_wcs which may hold mmap handles from astropy, preventing
+    # posix_fadvise from evicting the file's pages from the page cache.
+    import gc
+
+    del img_data, var_data, flag_data, spatial_wcs, spectral_wcs
+    del lambda_c_map, delta_lambda_map, contrib
+    del flux_acc, weight_acc, var_acc, count_acc, and_mask, or_mask, flat_idx
+    gc.collect()
+
+    # Evict the input FITS pages only after dropping WCS references that may
+    # still hold mmap-backed astropy state.
+    evict_file_pages(fpath)
+
     return tmp.name
+
+
+def _iter_bounded_unordered(
+    pool: mp.Pool,
+    func: Callable[[Path], Optional[str]],
+    items: Iterable[Path],
+    max_pending: int,
+) -> Iterator[Optional[str]]:
+    """Yield unordered results while capping the number of in-flight tasks."""
+    result_queue: "queue.Queue[tuple[bool, object]]" = queue.Queue()
+    iterator = iter(items)
+    pending = 0
+    exhausted = False
+
+    def _submit_one() -> bool:
+        nonlocal pending, exhausted
+        if exhausted:
+            return False
+        try:
+            item = next(iterator)
+        except StopIteration:
+            exhausted = True
+            return False
+
+        pool.apply_async(
+            func,
+            (item,),
+            callback=lambda result: result_queue.put((True, result)),
+            error_callback=lambda exc: result_queue.put((False, exc)),
+        )
+        pending += 1
+        return True
+
+    max_pending = max(1, max_pending)
+    while pending < max_pending and _submit_one():
+        pass
+
+    while pending > 0:
+        ok, payload = result_queue.get()
+        pending -= 1
+
+        while pending < max_pending and _submit_one():
+            pass
+
+        if ok:
+            yield payload  # type: ignore[misc]
+        else:
+            raise payload  # type: ignore[misc]
 
 
 def drizzle_detector(
@@ -195,7 +261,8 @@ def drizzle_detector(
         for fpath in fits_paths:
             try:
                 img_data, var_data, flag_data, _, spatial_wcs, spectral_wcs = _read_input_fits(
-                    fpath, config.subtract_zodi, static_zodi=config.static_zodi
+                    fpath, config.subtract_zodi, static_zodi=config.static_zodi,
+                    bg_fraction_reject_level=config.zodi_bg_fraction_min,
                 )
             except Exception as e:
                 logger.warning(f"Skipping {fpath.name}: {e}")
@@ -235,6 +302,19 @@ def drizzle_detector(
                 f_xy=f_xy,
                 exclude_mask=exclude_mask,
             )
+
+            # Release large arrays and evict input FITS from page cache.
+            # Same rationale as the parallel path in _worker_compute():
+            # astropy WCS objects may hold mmap handles that keep the kernel
+            # from releasing the file's pages.  Explicit del + gc.collect()
+            # drops those references before posix_fadvise(DONTNEED).
+            del img_data, var_data, flag_data, spatial_wcs, spectral_wcs
+            del lambda_c_map, delta_lambda_map, pix_idx, out_y, out_x, f_xy
+            if exclude_mask is not None:
+                del exclude_mask
+            import gc
+            gc.collect()
+            evict_file_pages(fpath)
     else:
         # ── Parallel path ────────────────────────────────────────────────
         n_workers = min(config.drizzle_workers, len(fits_paths))
@@ -242,27 +322,34 @@ def drizzle_detector(
 
         from tqdm import tqdm
 
+        max_pending_tmp = config.max_pending_tmp if config.max_pending_tmp is not None else n_workers * 2
+        max_pending_tmp = max(max_pending_tmp, n_workers)
+        logger.info(f"D{detector}: bounded tmp backlog = {max_pending_tmp}")
+
         with mp.Pool(
             processes=n_workers,
             initializer=_init_drizzle_worker,
             initargs=(config, output_wcs, output_shape, zgrid, exclude_bits),
         ) as pool:
             pbar = tqdm(fits_paths, desc=f"D{detector} ({n_workers}w)", unit="file")
-            for tmp_path in pool.imap_unordered(_worker_compute, fits_paths, chunksize=1):
+            for tmp_path in _iter_bounded_unordered(pool, _worker_compute, fits_paths, max_pending_tmp):
                 pbar.update(1)
                 if tmp_path is None:
                     n_rejected += 1
                 else:
-                    data = np.load(tmp_path)
-                    # Fast array addition (no bincount — that was done in worker)
-                    cube.flux_weighted.ravel()[:] += data["flux"]
-                    cube.weight_total.ravel()[:] += data["weight"]
-                    cube.var_accum.ravel()[:] += data["var"]
-                    cube.count_map.ravel()[:] += data["count"].astype(np.uint16)
-                    # Bitwise merge: AND mask from all-ones identity, OR from zero identity
-                    cube.and_mask.ravel()[:] &= data["and_mask"]
-                    cube.or_mask.ravel()[:] |= data["or_mask"]
-                    cube.n_inputs += 1
+                    tmp_path = Path(tmp_path)
+                    with np.load(tmp_path) as data:
+                        # Fast array addition (no bincount — that was done in worker)
+                        cube.flux_weighted.ravel()[:] += data["flux"]
+                        cube.weight_total.ravel()[:] += data["weight"]
+                        cube.var_accum.ravel()[:] += data["var"]
+                        cube.count_map.ravel()[:] += data["count"].astype(np.uint16)
+                        # Bitwise merge: AND mask from all-ones identity, OR from zero identity
+                        cube.and_mask.ravel()[:] &= data["and_mask"]
+                        cube.or_mask.ravel()[:] |= data["or_mask"]
+                        cube.n_inputs += 1
+
+                    evict_file_pages(tmp_path)
                     os.unlink(tmp_path)
             pbar.close()
 
@@ -345,7 +432,7 @@ def drizzle(config: Drizzle3DConfig) -> Dict[int, Path]:
     return results
 
 
-def _read_input_fits(filepath: Path, subtract_zodi: bool, static_zodi: bool = False):
+def _read_input_fits(filepath: Path, subtract_zodi: bool, static_zodi: bool = False, bg_fraction_reject_level: float = 0.5):
     """Read a SPHEREx input FITS file using the shared MEF reader.
 
     Returns
@@ -364,7 +451,10 @@ def _read_input_fits(filepath: Path, subtract_zodi: bool, static_zodi: bool = Fa
     spectral_wcs = mef.spectral_wcs
 
     if subtract_zodi:
-        image, _ = subtract_zodiacal_background(image, zodi, flags, variance, static_zodi=static_zodi)
+        image, _ = subtract_zodiacal_background(
+            image, zodi, flags, variance, static_zodi=static_zodi,
+            bg_fraction_reject_level=bg_fraction_reject_level,
+        )
 
     return image, variance, flags, zodi, spatial_wcs, spectral_wcs
 
