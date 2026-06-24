@@ -106,12 +106,18 @@ def _bucket_per_image_photometry(
 
 
 def _tid_to_filename(tid) -> str:
-    """Format target_id as integer string for filenames (no scientific notation)."""
-    s = str(tid)
-    try:
-        return f"{int(float(s)):d}"
-    except (ValueError, OverflowError):
-        return s
+    """Format target_id as a filename-safe string (no scientific notation, no precision loss).
+
+    Must NOT round-trip through float() -- target IDs larger than 2**53 cannot be
+    represented exactly in float64, so int(float(s)) silently corrupts them
+    (e.g. 39633458753962171 -> 39633458753962168).
+    """
+    s = str(tid).strip()
+    if s.lstrip("+-").isdigit():
+        # Plain integer ID -- return verbatim to preserve precision.
+        return s.lstrip("+")
+    # Non-integer ID: sanitize separators so it stays a single filename token.
+    return s.replace(".", "_").replace("/", "_")
 
 
 def _materialize_lightcurves_from_buckets(bucket_paths: list[Path], output_dir: Path) -> int:
