@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
-import matplotlib.cm as cm
+import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import numpy.ma as ma
@@ -221,7 +221,7 @@ def create_spectrum_plot(
         days_since_first = [mjd - mjd_min for mjd in mjds]
 
         # Create colormap for date coding
-        cmap = cm.get_cmap("viridis")
+        cmap = matplotlib.colormaps["viridis"]
         norm = Normalize(vmin=0, vmax=max(days_since_first) if days_since_first else 1)
 
         # Two-pass plotting: errorbars first (transparent), then markers (solid)
@@ -466,7 +466,7 @@ def create_lightcurve_plot(
         rejected_points = []
 
     # Get colormap for wavelength coding
-    cmap = cm.get_cmap(WAVELENGTH_CMAP)
+    cmap = matplotlib.colormaps[WAVELENGTH_CMAP]
     norm = Normalize(vmin=WAVELENGTH_RANGE[0], vmax=WAVELENGTH_RANGE[1])
 
     # Sort by MJD for proper time ordering
@@ -812,7 +812,7 @@ def plot_summary_statistics(photometry_results: List[PhotometryResult], output_p
     # 4. Time coverage
     ax = axes[1, 1]
     bands_unique = sorted(set(bands))
-    band_colors = cm.get_cmap("rainbow")(np.linspace(0, 1, len(bands_unique)))
+    band_colors = matplotlib.colormaps["rainbow"](np.linspace(0, 1, len(bands_unique)))
 
     for band, color in zip(bands_unique, band_colors):
         band_mjds = [p.mjd for p in photometry_results if p.band == band]

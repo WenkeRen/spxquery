@@ -290,16 +290,17 @@ class VisualizationConfig:
         if self.sigma_threshold <= 0:
             raise ValueError(f"sigma_threshold must be > 0, got {self.sigma_threshold}")
 
-        # Validate colormaps
-        import matplotlib.cm as cm
+        # Validate colormaps (matplotlib.colormaps[] is the >=3.5 API;
+        # matplotlib.cm.get_cmap was removed in matplotlib 3.9)
+        import matplotlib
 
         try:
-            cm.get_cmap(self.wavelength_cmap)
-        except ValueError:
+            matplotlib.colormaps[self.wavelength_cmap]
+        except (KeyError, ValueError):
             raise ValueError(f"Invalid wavelength_cmap: '{self.wavelength_cmap}'")
         try:
-            cm.get_cmap(self.date_cmap)
-        except ValueError:
+            matplotlib.colormaps[self.date_cmap]
+        except (KeyError, ValueError):
             raise ValueError(f"Invalid date_cmap: '{self.date_cmap}'")
 
         # Validate numeric ranges
